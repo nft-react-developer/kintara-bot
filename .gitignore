@@ -1,0 +1,23 @@
+# ===== SECRETS (JANGAN PERNAH commit) =====
+.env
+.env.local
+*.key
+*secret*
+*credential*
+
+# ===== runtime / working files (berisi data akun: cookie JWT, screenshot, state) =====
+recon/
+tools/_archive/
+*.log
+*.pid
+*.jsonl
+*.har
+*.png
+errors.json
+
+# ===== deps & misc =====
+node_modules/
+npm-debug.log*
+.DS_Store
+/tmp/
+*.zip
