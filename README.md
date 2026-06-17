@@ -46,9 +46,11 @@ After installation, open your Telegram bot and send `/start`:
 | `/balance` | 💰 Gold / $KINS / resources |
 | `/quest` | 📋 Daily quest |
 | `/claim` | 🎁 Claim all completed daily quests |
+| `/spinner` | 🎡 Run the free spinner wheel |
 | `/help` | ❓ Command list |
 
 > **1 account = 1 activity**: fishing **or** gathering. This is more natural and safer for anti-cheat behavior.
+> `/spinner` checks cooldown, level, cosmetic bag space, and refuses to run while fishing/gathering workers are active because concurrent backpack writes could overwrite rewards. It does not delete or move items automatically.
 
 ## 🛠️ How it works (headless, reverse-engineered)
 

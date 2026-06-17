@@ -44,7 +44,7 @@ There is no `dev` script.
 
 `/auto` is daily-first. It claims completed daily quests, prioritizes pending fishing quests, then pending gather/mining quests, and only then falls back to the existing skills/materials decision logic.
 
-Telegram also exposes `/claim` for a manual one-shot claim of every completed daily quest.
+Telegram also exposes `/claim` for a manual one-shot claim of every completed daily quest and `/spinner` for the free spinner wheel. `/spinner` prechecks cooldown, level, cosmetic bag space, and active fish/gather workers; it must not delete or move items automatically.
 
 ## Security notes
 

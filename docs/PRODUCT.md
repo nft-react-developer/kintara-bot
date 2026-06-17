@@ -36,6 +36,7 @@ The primary user is an operator who controls the bot through Telegram. The opera
 3. Commands spawn or stop activity processes.
 4. Status and quest commands read local runtime state and Kintara API state.
 5. `/claim` manually claims every completed daily quest that is not claimed yet.
+6. `/spinner` runs the free spinner wheel after checking average level, cooldown, cosmetic bag space, and whether fish/gather workers are active.
 
 ### Wallet login
 

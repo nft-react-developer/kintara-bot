@@ -12,7 +12,7 @@ const tg = require('../lib/telegram');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { login } = require('../lib/walletAuth');
 const { config } = require('../config');
-const { pickPlayerName, pickPlayerId, playerLabel } = require('../lib/playerIdentity');
+const { pickPlayerName, pickPlayerId, playerLabel, htmlEscape } = require('../lib/playerIdentity');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'recon');
@@ -20,8 +20,9 @@ const PIDFILE = path.join(OUT, 'control', 'fishbot.pid');
 const GPIDFILE = path.join(OUT, 'control', 'gatherbot.pid');
 const OPIDFILE = path.join(OUT, 'control', 'orch.pid');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const DAILY_SPINNER_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
-let cli = null, lastAuth = 0, myPid = null, myName = '';
+let cli = null, lastAuth = 0, myPid = null, myName = '', spinnerBusy = false;
 async function client() {
   if (!cli || Date.now() - lastAuth > 1500000) {
     const a = await login();
@@ -110,6 +111,93 @@ async function hClaimQuests() {
     (ok.length ? ok.join('\n') : 'No quests claimed.') +
     (failed.length ? `\n\n${failed.join('\n')}` : '');
 }
+function slotIsEmpty(slot) {
+  return !slot || (
+    !slot.t && !slot.type && !slot.id && !slot.itemType &&
+    Number(slot.n || slot.count || 0) <= 0
+  );
+}
+function spinnerGrantLabel(grant) {
+  if (!grant || typeof grant !== 'object') return 'unknown reward';
+  const type = String(grant.type || grant.itemType || 'unknown');
+  const amount = Number(grant.amount || grant.n || grant.count || 0);
+  const labels = {
+    wood: '🪵 wood',
+    stone: '🪨 stone',
+    coal: 'coal',
+    gold: 'gold',
+    red_aura: 'Red Aura',
+    cosmetic_red_aura: 'Red Aura',
+  };
+  const label = labels[type] || type;
+  if (type === 'cosmetic_red_aura' || type === 'red_aura') return 'Red Aura cosmetic';
+  if (type === 'gold') return amount === 1 ? '1 gold' : `${amount || 0} gold`;
+  return `${amount || 0} ${label}`;
+}
+function spinnerResultMessage(result) {
+  const grant = result?.grant || {};
+  const winIndex = Number(result?.winIndex);
+  const slot = Number.isFinite(winIndex) ? `\n🎯 Wheel slot: ${winIndex + 1}` : '';
+  return `✅ Spin complete\n🎁 Reward: <b>${htmlEscape(spinnerGrantLabel(grant))}</b>${slot}`;
+}
+function formatDuration(ms) {
+  const totalMin = Math.max(0, Math.ceil(ms / 60000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+async function hSpinner(args = []) {
+  const allowedArgs = new Set(['force']);
+  const unknownArg = args.find((x) => !allowedArgs.has(String(x || '').toLowerCase()));
+  if (unknownArg) return `🎡 <b>Free Spinner</b>\nUsage: /spinner\nUse /spinner force only to bypass the cosmetic-slot precheck.`;
+
+  if (spinnerBusy) return `🎡 <b>Free Spinner</b> — ${who()}\n⏳ Spinner request already in progress.`;
+
+  const force = args.map((x) => String(x || '').toLowerCase()).includes('force');
+  const fr = botPid(), gr = gatherPid();
+  if (fr || gr) {
+    return `🎡 <b>Free Spinner</b> — ${who()}\n⚠️ Stop fishing/gathering before spinning. Spinner and workers can both update backpack state, so spinning during an active worker could overwrite rewards.\n\nRun /stop, then /spinner.`;
+  }
+
+  spinnerBusy = true;
+  try {
+    const c = await client();
+    const st = await c.playerStats(myPid).catch(() => ({}));
+    const avg = Number(st.avg || 0);
+    if (avg < 5) return `🎡 <b>Free Spinner</b> — ${who()}\n🔒 Requires average level 5. Current avg: ${st.avg || '?'}`;
+
+    const me = await c.me().catch(() => null);
+    if (!me?.ok || !me.backpack) return `🎡 <b>Free Spinner</b> — ${who()}\n⚠️ Could not read current backpack/session state. Try again later.`;
+    const bp = me.backpack || {};
+    const lastSpinMs = Number(me?.meta?.dailySpinnerLastMs || me?.dailySpinnerLastMs || 0);
+    if (Number.isFinite(lastSpinMs) && lastSpinMs > 0) {
+      const remaining = DAILY_SPINNER_COOLDOWN_MS - (Date.now() - lastSpinMs);
+      if (remaining > 0) return `🎡 <b>Free Spinner</b> — ${who()}\n⏳ Cooldown active. Try again in ${formatDuration(remaining)}.`;
+    }
+
+    const cosmeticSlots = Array.isArray(bp.cosmeticSlots) ? bp.cosmeticSlots : [];
+    const freeCosmeticSlots = cosmeticSlots.filter(slotIsEmpty).length;
+    if (cosmeticSlots.length && freeCosmeticSlots === 0 && !force) {
+      return `🎡 <b>Free Spinner</b> — ${who()}\n⚠️ Cosmetic bag looks full. Free one cosmetic slot before spinning, because the rare Red Aura reward needs space.\n\nIf you still want to spin anyway: /spinner force`;
+    }
+
+    const r = await c.dailySpinnerSpin();
+    if (!r || r.ok === false || !r.grant) return `🎡 <b>Free Spinner</b> — ${who()}\n⚠️ Spin response was incomplete. Check in-game before retrying.`;
+    const newBp = r?.backpack || {};
+    return `🎡 <b>Free Spinner</b> — ${who()}\n${spinnerResultMessage(r)}` +
+      `\n🪵 wood: ${newBp.wood ?? bp.wood ?? 0} | 🪨 stone: ${newBp.stone ?? bp.stone ?? 0} | coal: ${newBp.coal ?? bp.coal ?? 0} | gold: ${newBp.gold ?? bp.gold ?? 0}`;
+  } catch (e) {
+    const err = e.body?.error || e.message || 'unknown_error';
+    if (e.status === 429) return `🎡 <b>Free Spinner</b> — ${who()}\n⏳ Spinner is on cooldown. Try again later.`;
+    if (err === 'spinner_level_required') return `🎡 <b>Free Spinner</b> — ${who()}\n🔒 Requires average level 5.`;
+    if (err === 'inventory_full') return `🎡 <b>Free Spinner</b> — ${who()}\n⚠️ Inventory/cosmetic bag is full. Free one cosmetic slot and try again.`;
+    return `🎡 <b>Free Spinner</b> — ${who()}\n⚠️ Spin failed: ${String(err).slice(0, 80)}`;
+  } finally {
+    spinnerBusy = false;
+  }
+}
 function hStartFish() {
   if (gatherPid()) return '⚠️ Gather bot is ON — run /stop first (1 account = 1 activity).';
   if (botPid()) return '🎣 Fishing bot is already ON.';
@@ -144,7 +232,7 @@ function hStop() {
 function hHelp() {
   return `🤖 <b>Kintara Bot — Commands</b>\n` +
     `/status — bot status & inventory\n/skills — skill XP & levels\n/balance — gold/$KINS/resources\n/quest — daily quest\n/claim — claim completed daily quests\n` +
-    `/fish — fishing + cooking\n/gather — chop wood 🪓\n/mine — mining stone/coal ⛏\n/auto — orchestrator auto-selects 🧠\n/stop — STOP all\n/help — help\n\n` +
+    `/spinner — free spinner wheel\n/fish — fishing + cooking\n/gather — chop wood 🪓\n/mine — mining stone/coal ⛏\n/auto — orchestrator auto-selects 🧠\n/stop — STOP all\n/help — help\n\n` +
     `<i>1 account = 1 activity (safer for anti-cheat). /combat soon.</i>`;
 }
 
@@ -152,6 +240,7 @@ const commands = {
   start: () => hHelp(), help: () => hHelp(),
   status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance,
   quest: hQuest, claim: hClaimQuests, claimquests: hClaimQuests, fish: hStartFish, stop: hStop,
+  spinner: hSpinner, spin: hSpinner,
   gather: hStartGather, chop: hStartGather, mine: () => hStartGather(['rock']),
   auto: hAuto, combat: () => '⚔️ Combat is being prepared (RE combat WS messages + survival).',
   sell: () => '💰 Sell is active after the tutorial is complete.',
@@ -169,6 +258,7 @@ const MENU = [
   { command: 'balance', description: '💰 Gold/$KINS/resources' },
   { command: 'quest', description: '📋 Daily quest' },
   { command: 'claim', description: '🎁 Claim completed quests' },
+  { command: 'spinner', description: '🎡 Free spinner wheel' },
   { command: 'help', description: '❓ Command list' },
 ];
 async function syncMenu() {
