@@ -1,11 +1,11 @@
-# ===== SECRETS (JANGAN PERNAH commit) =====
+# ===== SECRETS (NEVER commit) =====
 .env
 .env.local
 *.key
 *secret*
 *credential*
 
-# ===== runtime / working files (berisi data akun: cookie JWT, screenshot, state) =====
+# ===== runtime / working files containing account data: JWT cookies, screenshots, state =====
 recon/
 tools/_archive/
 *.log
@@ -15,7 +15,7 @@ tools/_archive/
 *.png
 errors.json
 
-# ===== deps & misc =====
+# ===== dependencies & misc =====
 node_modules/
 npm-debug.log*
 .DS_Store

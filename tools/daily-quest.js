@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // ============ DAILY-QUEST AUTOPILOT — pure REST, no queue ============
-// Loop: baca daily-quest-progress -> claim quest yg sudah selesai. Jalan paralel
-// dgn bot-headless (yg grind fish/gather). Re-auth cookie berkala.
+// Loop: read daily-quest-progress -> claim completed quests. Runs in parallel
+// with bot-headless, which grinds fish/gather. Re-authenticates the cookie periodically.
 //
-// Pakai: node tools/daily-quest.js
+// Usage: node tools/daily-quest.js
 const fs = require('fs');
 const path = require('path');
 const { KintaraClient } = require('../lib/kintaraClient');
@@ -28,7 +28,7 @@ const INTERVAL = 180000; // 3 menit
         summary.push(`${quest.kind} ${pr}/${quest.target}${cl ? '✓claimed' : done ? '✓READY' : ''}`);
         if (done && !cl) {
           try { const r = await cli.dailyQuestClaim(quest.id); log(`🎁 CLAIMED ${quest.kind} (${quest.rewardXpSpreadTotal}XP) -> ${JSON.stringify(r).slice(0, 80)}`); }
-          catch (e) { log(`claim ${quest.kind} gagal: ${e.message.slice(0, 50)}`); }
+          catch (e) { log(`claim ${quest.kind} failed: ${e.message.slice(0, 50)}`); }
         }
       }
       log('day=' + dq.day + ' | ' + summary.join(' | '));

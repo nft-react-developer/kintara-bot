@@ -33,19 +33,20 @@ function persistEnv(key, value) {
     if (raw.length && !raw.endsWith('\n')) raw += '\n';
     raw += `${key}=${value}\n`;
   }
-  fs.writeFileSync(ENV_PATH, raw);
+  fs.writeFileSync(ENV_PATH, raw, { mode: 0o600 });
+  try { fs.chmodSync(ENV_PATH, 0o600); } catch {}
   process.env[key] = value;
 }
 
 const config = {
-  // ---- Auth (Opsi A: cookie session, manual) ----
-  sessionCookie: process.env.KINTARA_SESSION_COOKIE || '', // copy dari DevTools setelah login wallet
+  // ---- Auth (Option A: manual session cookie) ----
+  sessionCookie: process.env.KINTARA_SESSION_COOKIE || '', // copy from DevTools after wallet login
 
-  // ---- Auth (Opsi B: wallet signature, otomatis — TODO setelah HAR login tersedia) ----
-  walletPrivateKey: process.env.WALLET_PRIVATE_KEY || '', // base58 Solana secret key, HANYA di server lo sendiri
+  // ---- Auth (Option B: automatic wallet signature) ----
+  walletPrivateKey: process.env.WALLET_PRIVATE_KEY || '', // base58 Solana secret key; keep it only on your own server
   walletAddress: process.env.WALLET_ADDRESS || '',
 
-  playerId: process.env.MY_PLAYER_ID || '', // auto-detected dari /api/auth/me jika kosong
+  playerId: process.env.MY_PLAYER_ID || '', // auto-detected from /api/auth/me when empty
 
   // ---- API hosts ----
   apiBase: process.env.KINTARA_API_BASE || 'https://kintara.gg',
@@ -69,7 +70,7 @@ const config = {
   flipEnabled: (process.env.FLIP_ENABLED || 'true').toLowerCase() === 'true',
   flipMaxCostGold: parseInt(process.env.FLIP_MAX_COST_GOLD || '1000', 10),
   flipCooldownSec: parseInt(process.env.FLIP_COOLDOWN_SEC || '60', 10),
-  flipUnderprice: parseFloat(process.env.FLIP_UNDERPRICE || '0.45'), // beli kalau < 45% harga market
+  flipUnderprice: parseFloat(process.env.FLIP_UNDERPRICE || '0.45'), // buy when below 45% of market price
   flipMinProfitGold: parseInt(process.env.FLIP_MIN_PROFIT_GOLD || '50', 10),
   balanceReserveGold: parseInt(process.env.BALANCE_RESERVE_GOLD || '500', 10),
   dailyBuyCapGold: parseInt(process.env.DAILY_BUY_CAP_GOLD || '2000', 10),
@@ -81,8 +82,8 @@ const config = {
   // ---- Daily quest / casino / world tribute ----
   dailyQuestEnabled: (process.env.DAILY_QUEST_ENABLED || 'true').toLowerCase() === 'true',
   freeSpinnerEnabled: (process.env.FREE_SPINNER_ENABLED || 'true').toLowerCase() === 'true',
-  paidSpinnerEnabled: (process.env.PAID_SPINNER_ENABLED || 'false').toLowerCase() === 'true', // pakai $KINS — default off
-  blackjackEnabled: (process.env.BLACKJACK_ENABLED || 'false').toLowerCase() === 'true',       // default off, ada risiko gold
+  paidSpinnerEnabled: (process.env.PAID_SPINNER_ENABLED || 'false').toLowerCase() === 'true', // uses $KINS — default off
+  blackjackEnabled: (process.env.BLACKJACK_ENABLED || 'false').toLowerCase() === 'true',       // default off; risks gold
   blackjackMaxBet: parseInt(process.env.BLACKJACK_MAX_BET || '50', 10),
   worldTributeEnabled: (process.env.WORLD_TRIBUTE_ENABLED || 'true').toLowerCase() === 'true',
   worldTributeMaxPerTick: {
@@ -93,18 +94,18 @@ const config = {
 
   // ---- Bank ----
   bankAutoDeposit: (process.env.BANK_AUTO_DEPOSIT || 'false').toLowerCase() === 'true',
-  bankKeepGold: parseInt(process.env.BANK_KEEP_GOLD || '200', 10), // sisa gold di tangan, lebihnya disetor
+  bankKeepGold: parseInt(process.env.BANK_KEEP_GOLD || '200', 10), // gold kept on hand; extra is deposited
 
-  // ---- Core-loop FABRICATION (client-authoritative). RISIKO: langgar ToS / anti-cheat. ----
-  // Master kill-switch: SEMUA aksi fabricated mati kalau ini false.
+  // ---- Core-loop FABRICATION (client-authoritative). RISK: may violate ToS / anti-cheat. ----
+  // Master kill switch: all fabricated actions are disabled when this is false.
   fabricateEnabled: (process.env.FABRICATE_ENABLED || 'false').toLowerCase() === 'true',
 
-  // Auto-gather (naikkan resource + skill XP via save-backpack/save-skills).
+  // Auto-gather: increases resources and skill XP via save-backpack/save-skills.
   gatherEnabled: (process.env.GATHER_ENABLED || 'false').toLowerCase() === 'true',
   gatherSkill: process.env.GATHER_SKILL || 'woodcutting', // woodcutting|mining_stone|mining_coal|mining_metal|fishing
-  gatherRatePerMin: parseFloat(process.env.GATHER_RATE_PER_MIN || '15'),  // unit/menit (laju manusiawi)
-  gatherPerTickCap: parseInt(process.env.GATHER_PER_TICK_CAP || '30', 10), // batas keras per tick
-  gatherJitter: parseFloat(process.env.GATHER_JITTER || '0.3'),            // 0..1, variasi acak
+  gatherRatePerMin: parseFloat(process.env.GATHER_RATE_PER_MIN || '15'),  // units per minute (human-like pace)
+  gatherPerTickCap: parseInt(process.env.GATHER_PER_TICK_CAP || '30', 10), // hard cap per tick
+  gatherJitter: parseFloat(process.env.GATHER_JITTER || '0.3'),            // 0..1, random variation
   gatherDailyCapDefault: parseInt(process.env.GATHER_DAILY_CAP || '5000', 10),
   gatherDailyCap: {
     wood: parseInt(process.env.GATHER_DAILY_CAP_WOOD || '5000', 10),
@@ -114,11 +115,11 @@ const config = {
     fish: parseInt(process.env.GATHER_DAILY_CAP_FISH || '3000', 10),
   },
 
-  // Auto-loot ground bags (jalur server asli, bukan fabrikasi — tetap default off).
+  // Auto-loot ground bags through the real server path, not fabrication — still default off.
   autolootEnabled: (process.env.AUTOLOOT_ENABLED || 'false').toLowerCase() === 'true',
   autolootShard: parseInt(process.env.AUTOLOOT_SHARD || '1', 10),
 
-  // Movement target (save-spawn). col/row -1 = nonaktif.
+  // Movement target (save-spawn). col/row -1 means disabled.
   moveRealm: process.env.MOVE_REALM || 'world',
   moveCol: parseInt(process.env.MOVE_COL || '-1', 10),
   moveRow: parseInt(process.env.MOVE_ROW || '-1', 10),

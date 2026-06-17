@@ -4,8 +4,8 @@
 
 ### a **RY GROUP** project
 
-Fully **headless** automation bot for [Kintara.gg](https://kintara.gg) — a Solana isometric MMO.
-**No browser needed.** Login pakai wallet, kontrol penuh dari **Telegram**.
+Fully **headless** automation bot for [Kintara.gg](https://kintara.gg), a Solana isometric MMO.
+**No browser required.** Wallet login and full control through **Telegram**.
 
 🎣 Fishing · 🍳 Cooking · 🪓 Woodcutting · ⛏ Mining (stone/coal) · 🏦 Banking · 💰 Marketplace · 📋 Daily Quest · 🧠 Auto-Orchestrator
 
@@ -14,61 +14,61 @@ Fully **headless** automation bot for [Kintara.gg](https://kintara.gg) — a Sol
 
 </div>
 
-## ⚡ One-line Install
+## ⚡ One-line install
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/kintara-bot/main/install.sh)
 ```
 
-Installer otomatis: clone repo → install deps → minta **2 hal saja** (wallet private key + Telegram bot token) → tulis `.env` (chmod 600) → start bot kontrol Telegram.
+The installer clones the repository, installs dependencies, asks for only two required values — your wallet private key and Telegram bot token — writes them to `.env` with `chmod 600`, and starts the Telegram control bot.
 
-**Non-interaktif:**
+**Non-interactive:**
 ```bash
 WALLET_PRIVATE_KEY=your_base58_key TELEGRAM_BOT_TOKEN=123456:AA... \
   bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/kintara-bot/main/install.sh)
 ```
 
-> 🔒 Private key kamu **tidak pernah keluar dari mesin** — hanya ditulis ke `.env` (chmod 600, git-ignored) untuk menandatangani login game secara lokal. **Cookie/session TIDAK diperlukan** — bot login sendiri dari private key.
+> 🔒 Your private key should never leave your machine. This project writes it only to the local `.env` file, protected with `chmod 600` and ignored by Git, so it can sign the game login challenge locally. **No cookie/session is required** because the bot logs in from the private key.
 
-## 📱 Kontrol via Telegram
+## 📱 Telegram control
 
-Setelah install, buka bot Telegram kamu → `/start`:
+After installation, open your Telegram bot and send `/start`:
 
-| Command | Aksi |
-|---------|------|
+| Command | Action |
+|---------|--------|
 | `/fish` | 🎣 Fishing + auto-cooking |
-| `/gather` | 🪓 Chop wood (woodcutting) |
-| `/mine` | ⛏ Mining stone + coal |
-| `/auto` | 🧠 Orchestrator pilih aktivitas otomatis |
-| `/stop` | ⏹️ Stop semua bot |
-| `/status` | 📊 Status + inventory live |
-| `/skills` | 📈 Level & XP skill |
-| `/balance` | 💰 Gold / $KINS / resource |
+| `/gather` | 🪓 Chop wood |
+| `/mine` | ⛏ Mine stone + coal |
+| `/auto` | 🧠 Let the orchestrator choose the activity automatically |
+| `/stop` | ⏹️ Stop all bots |
+| `/status` | 📊 Live status + inventory |
+| `/skills` | 📈 Skill levels and XP |
+| `/balance` | 💰 Gold / $KINS / resources |
 | `/quest` | 📋 Daily quest |
-| `/help` | ❓ Daftar command |
+| `/help` | ❓ Command list |
 
-> **1 akun = 1 aktivitas** (fishing **atau** gather) — lebih natural / aman anti-cheat.
+> **1 account = 1 activity**: fishing **or** gathering. This is more natural and safer for anti-cheat behavior.
 
-## 🛠️ Cara Kerja (Headless, full reverse-engineered)
+## 🛠️ How it works (headless, reverse-engineered)
 
-Bot bicara langsung ke protokol Kintara — **tanpa render game / browser**:
+The bot talks directly to the Kintara protocol without rendering the game or opening a browser:
 
-- **Auth**: `/api/auth/challenge` → tanda-tangan ed25519 (wallet) → `/api/auth/verify` → session (`lib/walletAuth.js`).
-- **Realtime**: WebSocket presence (`wss://kintara.gg/ws/queue|presence`) — gerak (`pos`), region, snapshot, harvest (`lib/presenceWs.js`).
-- **Aksi**: fishing (`act:fish` + grant-fish-xp), gather (`harv`/`harv_hit` + actionProof), cooking (Roast Pit), banking (`bankSlots`), marketplace (`/api/marketplace/sell`).
+- **Auth**: `/api/auth/challenge` → ed25519 wallet signature → `/api/auth/verify` → session (`lib/walletAuth.js`).
+- **Realtime**: WebSocket presence (`wss://kintara.gg/ws/queue|presence`) for movement (`pos`), region, snapshots, and harvest events (`lib/presenceWs.js`).
+- **Actions**: fishing (`act:fish` + `grant-fish-xp`), gathering (`harv`/`harv_hit` + `actionProof`), cooking at the Roast Pit, banking (`bankSlots`), marketplace selling (`/api/marketplace/sell`).
 
 ## 📋 Requirements
 
 - Node.js ≥ 18
-- Solana wallet (base58 private key) yang **hold ≥ 1.000 $KINS** (syarat main Kintara) + sudah **selesai tutorial** di game (unlock sell/quest).
-- Telegram bot token ([@BotFather](https://t.me/BotFather)).
+- Solana wallet with a base58 private key, holding **≥ 1,000 $KINS** as required by Kintara, with the game tutorial already completed to unlock selling and quests.
+- Telegram bot token from [@BotFather](https://t.me/BotFather).
 
-## 🧩 Manual run (tanpa Telegram)
+## 🧩 Manual run (without Telegram)
 
 ```bash
 npm install
-cp .env.example .env   # isi WALLET_PRIVATE_KEY
-npm run fish     # fishing+cooking
+cp .env.example .env   # fill WALLET_PRIVATE_KEY
+npm run fish     # fishing + cooking
 npm run gather   # wood
 npm run mine     # stone/coal
 npm run auto     # orchestrator
@@ -76,7 +76,7 @@ npm run auto     # orchestrator
 
 ## ⚠️ Disclaimer
 
-Automation tools bisa melanggar Terms of Service game. Pakai dengan risiko sendiri — project edukasi / riset. Combat (Wilderness mob) = **pending** (mob real-time client-sim, butuh game client — di luar scope headless).
+Automation tools may violate the game Terms of Service. Use at your own risk. This project is for education and research. Combat in the Wilderness is still **pending** because mobs are client-simulated in real time and currently outside the headless scope.
 
 ---
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // ============ GATHER BOT — autopilot wood/stone/coal (Path A, headless) ============
-// Connect world -> belajar node dari res_evt -> walk adjacent -> harvestNode
-// (harv->proof->harv_hit s/d felled) -> save-backpack loot -> ulang. Level
-// woodcutting/mining. Supervisor reconnect, tahan 502.
+// Connect to world -> learn nodes from res_evt -> walk adjacent -> harvestNode
+// (harv->proof->harv_hit until felled) -> save-backpack loot -> repeat. Levels
+// woodcutting/mining. Supervisor reconnects and tolerates 502 responses.
 //
-// Pakai: node tools/gather-bot.js [kind=tree|rock] [shard=s2]
+// Usage: node tools/gather-bot.js [kind=tree|rock] [shard=s2]
 const fs = require('fs');
 const path = require('path');
 const { Presence } = require('../lib/presenceWs');
@@ -30,7 +30,7 @@ async function connectWithRetry() {
       await p.connect();
       log('✅ presence live region=' + p.region);
       return p;
-    } catch (e) { log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 50)} — retry 15s`); await sleep(15000); }
+    } catch (e) { log(`connect attempt ${attempt} failed: ${e.message.slice(0, 50)} — retry 15s`); await sleep(15000); }
   }
 }
 
@@ -52,8 +52,8 @@ async function gatherLoop(p) {
   while (p.ready) {
     const pool = KIND === 'all' ? [...p.knownNodes('tree'), ...p.knownNodes('rock')] : p.knownNodes(KIND);
     const nodes = pool.filter((n) => !harvested.has(n.key));
-    if (!nodes.length) { logT('wait', 'nunggu node dari res_evt...'); await sleep(5000); continue; }
-    // pilih node terdekat dari posisi sekarang
+    if (!nodes.length) { logT('wait', 'waiting for nodes from res_evt...'); await sleep(5000); continue; }
+    // choose the nearest node from the current position
     nodes.sort((a, b) => {
       const [ac, ar] = a.key.split(',').map(Number), [bc, br] = b.key.split(',').map(Number);
       const da = Math.abs(ac - 30.5 - p.pos.x) + Math.abs(ar - 30.5 - p.pos.z);
@@ -82,8 +82,8 @@ async function gatherLoop(p) {
     const p = await connectWithRetry();
     p.on('close', () => { stats.reconnects++; log('⚠️ presence closed -> reconnect'); });
     await sleep(2000);
-    // diam dulu 8s biar kekumpul node dari res_evt
-    log('belajar node 8s...'); await sleep(8000);
+    // wait 8s first so nodes can be collected from res_evt
+    log('learning nodes for 8s...'); await sleep(8000);
     await gatherLoop(p);
     try { p.close(); } catch {}
     await sleep(3000);
