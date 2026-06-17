@@ -28,6 +28,9 @@ async function client() {
     cli = new KintaraClient({ cookie: a.cookie });
     myPid = pickPlayerId(a.player) || myPid;
     myName = pickPlayerName(a.player) || myName;
+    const me = await cli.me().catch(() => null);
+    myPid = pickPlayerId(me?.player, me, a.player) || myPid;
+    myName = pickPlayerName(me?.player, me, a.player) || myName;
     lastAuth = Date.now();
   }
   return cli;
