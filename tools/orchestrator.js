@@ -8,7 +8,7 @@
 // Goal priority (default):
 //   1) Completed daily quests -> claim immediately
 //   2) Pending fishing daily quest -> FISHING (fish+cook)
-//   3) Pending gather/mining daily quest -> GATHER (all)
+//   3) Pending gather/mining daily quest -> GATHER (tree/rock/all by quest)
 //   4) Low woodcutting/mining / need materials (build/sell) -> GATHER (all)
 //   5) Default -> FISHING (high XP/value)
 //
@@ -52,8 +52,32 @@ function isQuestReady(q, quest) {
   return !questClaimed(q, quest) && questProgress(q, quest) >= quest.target;
 }
 
-function isGatherQuestKind(kind) {
-  return ['gather', 'tree', 'wood', 'woodcutting', 'rock', 'stone', 'coal', 'mining'].includes(String(kind || '').toLowerCase());
+function normalizeGatherKind(kind) {
+  return ['tree', 'rock', 'all'].includes(kind) ? kind : 'all';
+}
+
+function gatherKindForQuest(quest) {
+  const text = `${quest?.kind || ''} ${quest?.label || ''}`.toLowerCase();
+  if (/(mine|mining|rock|stone|coal)/.test(text)) return 'rock';
+  if (/(woodcutting|wood|tree|chop)/.test(text)) return 'tree';
+  if (/gather/.test(text)) return 'all';
+  return null;
+}
+
+function gatherLabel(kind) {
+  if (kind === 'rock') return '⛏ Mining';
+  if (kind === 'tree') return '🪓 Woodcutting';
+  return '🪓 Gather';
+}
+
+function goalKey(goal, gatherKind = 'all') {
+  return goal === 'gather' ? `gather:${normalizeGatherKind(gatherKind)}` : goal;
+}
+
+function parseGoalKey(key) {
+  if (!key) return null;
+  if (key.startsWith('gather:')) return { goal: 'gather', gatherKind: normalizeGatherKind(key.split(':')[1]) };
+  return { goal: key, gatherKind: 'all' };
 }
 
 async function claimReadyQuests(c, q) {
@@ -78,15 +102,26 @@ async function claimReadyQuests(c, q) {
   return claimed;
 }
 
-function ensureOnly(activity) {
+function ensureOnly(activity, { gatherKind = 'all' } = {}) {
   // ensure only `activity` is running
   const fp = pidOf(FPID), gp = pidOf(GPID);
   if (activity === 'fish') {
     if (gp) { try { process.kill(gp, 'SIGKILL'); fs.unlinkSync(GPID); } catch {} }
     if (!pidOf(FPID)) { const c = cp.spawn('node', [path.join(ROOT, 'tools', 'bot-headless.js'), config.shard], { detached: true, stdio: 'ignore', cwd: ROOT }); c.unref(); fs.writeFileSync(FPID, JSON.stringify({ pid: c.pid, started: Date.now() })); log('▶️ START fishing (pid ' + c.pid + ')'); }
   } else if (activity === 'gather') {
+    const kind = normalizeGatherKind(gatherKind);
+    const cur = readJson(GPID);
     if (fp) { try { process.kill(fp, 'SIGKILL'); fs.unlinkSync(FPID); } catch {} }
-    if (!pidOf(GPID)) { const c = cp.spawn('node', [path.join(ROOT, 'tools', 'gather-bot.js'), 'all', config.shard], { detached: true, stdio: 'ignore', cwd: ROOT }); c.unref(); fs.writeFileSync(GPID, JSON.stringify({ pid: c.pid, started: Date.now() })); log('▶️ START gather-all (pid ' + c.pid + ')'); }
+    if (gp && normalizeGatherKind(cur?.kind) !== kind) {
+      try { process.kill(gp, 'SIGKILL'); } catch {}
+      try { fs.unlinkSync(GPID); } catch {}
+      log(`↔️ switch gather kind ${normalizeGatherKind(cur?.kind)} -> ${kind}`);
+    }
+    if (!pidOf(GPID)) {
+      const c = cp.spawn('node', [path.join(ROOT, 'tools', 'gather-bot.js'), kind, config.shard], { detached: true, stdio: 'ignore', cwd: ROOT });
+      c.unref(); fs.writeFileSync(GPID, JSON.stringify({ pid: c.pid, kind, started: Date.now() }));
+      log(`▶️ START gather-${kind} (pid ${c.pid})`);
+    }
   }
 }
 
@@ -98,22 +133,28 @@ async function decide() {
   const claimedNow = await claimReadyQuests(c, q);
   const quests = q?.dailyQuestConfig?.quests || [];
   // goal signals
-  const needFishQuest = quests.some((x) => x.kind === 'fish' && isQuestPending(q, x));
-  const needGatherQuest = quests.some((x) => isGatherQuestKind(x.kind) && isQuestPending(q, x));
+  const pendingFishQuest = quests.find((x) => x.kind === 'fish' && isQuestPending(q, x));
+  const pendingGatherQuest = quests.map((quest) => ({ quest, gatherKind: gatherKindForQuest(quest) }))
+    .find((x) => x.gatherKind && isQuestPending(q, x.quest));
+  const needFishQuest = !!pendingFishQuest;
+  const needGatherQuest = !!pendingGatherQuest;
   const woodLow = (bp.wood || 0) < 100, stoneLow = (bp.stone || 0) < 100;
   const gatherSkillLow = (xp.woodcutting || 0) < 5000 || (xp.mining || 0) < 5000; // gather skills are still low
   // decision
-  let goal, why;
+  let goal, gatherKind = 'all', why;
   if (needFishQuest) { goal = 'fish'; why = 'daily fish quest is not complete yet'; }
-  else if (needGatherQuest) { goal = 'gather'; why = 'daily gather/mining quest is not complete yet'; }
-  else if (gatherSkillLow && (woodLow || stoneLow)) { goal = 'gather'; why = 'woodcutting/mining skill + materials are still low'; }
+  else if (needGatherQuest) {
+    goal = 'gather'; gatherKind = pendingGatherQuest.gatherKind;
+    why = `daily ${gatherKind === 'rock' ? 'mining' : gatherKind === 'tree' ? 'woodcutting' : 'gather'} quest is not complete yet`;
+  }
+  else if (gatherSkillLow && (woodLow || stoneLow)) { goal = 'gather'; gatherKind = 'all'; why = 'woodcutting/mining skill + materials are still low'; }
   else { goal = 'fish'; why = 'default: fishing has high XP/value'; }
   const daily = {
     day: q?.dailyQuest?.day,
     claimedNow: claimedNow.length,
     pending: quests.filter((x) => isQuestPending(q, x)).map((x) => ({ id: x.id, kind: x.kind, progress: questProgress(q, x), target: x.target })),
   };
-  return { goal, why, forceSwitch: needFishQuest || needGatherQuest, snapshot: { wood: bp.wood, stone: bp.stone, coal: bp.coal, fish: bp.fish, woodcutting: xp.woodcutting, mining: xp.mining, fishing: xp.fishing, avg: st.avg, daily } };
+  return { goal, gatherKind, key: goalKey(goal, gatherKind), why, forceSwitch: needFishQuest || needGatherQuest, snapshot: { wood: bp.wood, stone: bp.stone, coal: bp.coal, fish: bp.fish, woodcutting: xp.woodcutting, mining: xp.mining, fishing: xp.fishing, avg: st.avg, daily } };
 }
 
 (async () => {
@@ -124,13 +165,17 @@ async function decide() {
   for (;;) {
     try {
       const d = await decide();
-      log(`evaluate: goal=${d.goal} (${d.why}) | ${JSON.stringify(d.snapshot)}`);
+      log(`evaluate: goal=${d.key} (${d.why}) | ${JSON.stringify(d.snapshot)}`);
       const elapsed = Date.now() - currentSince;
-      if (d.goal !== current && (d.forceSwitch || current === null || elapsed > MIN_RUN_MS)) {
-        ensureOnly(d.goal); current = d.goal; currentSince = Date.now();
-        await tg.send(`🧠 Switch -> <b>${d.goal === 'fish' ? '🎣 Fishing' : '🪓 Gather'}</b>\n${d.why}`).catch(() => {});
-      } else { ensureOnly(current || d.goal); if (!current) { current = d.goal; currentSince = Date.now(); } }
-      fs.writeFileSync(path.join(OUT, 'orchestrator-state.json'), JSON.stringify({ current, why: d.why, snapshot: d.snapshot, ts: Date.now() }));
+      if (d.key !== current && (d.forceSwitch || current === null || elapsed > MIN_RUN_MS)) {
+        ensureOnly(d.goal, { gatherKind: d.gatherKind }); current = d.key; currentSince = Date.now();
+        await tg.send(`🧠 Switch -> <b>${d.goal === 'fish' ? '🎣 Fishing' : gatherLabel(d.gatherKind)}</b>\n${d.why}`).catch(() => {});
+      } else {
+        const active = parseGoalKey(current) || d;
+        ensureOnly(active.goal, { gatherKind: active.gatherKind });
+        if (!current) { current = d.key; currentSince = Date.now(); }
+      }
+      fs.writeFileSync(path.join(OUT, 'orchestrator-state.json'), JSON.stringify({ current, goal: d.goal, gatherKind: d.gatherKind, why: d.why, snapshot: d.snapshot, ts: Date.now() }));
     } catch (e) { log('err: ' + (e.message || '').slice(0, 60)); if (/cookie|401/.test(e.message || '')) lastAuth = 0; }
     await sleep(EVAL_MS);
   }
