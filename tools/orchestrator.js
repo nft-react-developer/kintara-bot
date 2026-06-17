@@ -20,6 +20,7 @@ const { KintaraClient } = require('../lib/kintaraClient');
 const { login } = require('../lib/walletAuth');
 const tg = require('../lib/telegram');
 const { config } = require('../config');
+const { pickPlayerName, pickPlayerId, playerLabel } = require('../lib/playerIdentity');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'recon');
@@ -33,8 +34,18 @@ const pidOf = (f) => { const p = readJson(f); if (!p?.pid) return null; try { pr
 const EVAL_MS = 600000;          // evaluate every 10 minutes and switch sparingly
 const MIN_RUN_MS = 1500000;      // minimum 25 minutes per activity before switching to avoid queue thrashing
 
-let cli, lastAuth = 0, current = null, currentSince = 0, myPid = null;
-async function client() { if (!cli || Date.now() - lastAuth > 1500000) { const a = await login(); cli = new KintaraClient({ cookie: a.cookie }); myPid = a.player?.id || myPid; lastAuth = Date.now(); } return cli; }
+let cli, lastAuth = 0, current = null, currentSince = 0, myPid = null, myName = '';
+async function client() {
+  if (!cli || Date.now() - lastAuth > 1500000) {
+    const a = await login();
+    cli = new KintaraClient({ cookie: a.cookie });
+    myPid = pickPlayerId(a.player) || myPid;
+    myName = pickPlayerName(a.player) || myName;
+    lastAuth = Date.now();
+  }
+  return cli;
+}
+function who() { return playerLabel({ name: myName, id: myPid }); }
 
 function questProgress(q, quest) {
   return (q?.dailyQuest?.prog || {})[quest.id] || 0;
@@ -97,7 +108,7 @@ async function claimReadyQuests(c, q) {
     }
   }
   if (claimed.length) {
-    await tg.send('🎁 <b>Daily quest claimed</b>\n' + claimed.map((x) => `✅ ${x.label || x.kind} (${x.rewardXp || 0}XP)`).join('\n')).catch(() => {});
+    await tg.send(`🎁 <b>Daily quest claimed</b> — ${who()}\n` + claimed.map((x) => `✅ ${x.label || x.kind} (${x.rewardXp || 0}XP)`).join('\n')).catch(() => {});
   }
   return claimed;
 }
@@ -169,7 +180,7 @@ async function decide() {
       const elapsed = Date.now() - currentSince;
       if (d.key !== current && (d.forceSwitch || current === null || elapsed > MIN_RUN_MS)) {
         ensureOnly(d.goal, { gatherKind: d.gatherKind }); current = d.key; currentSince = Date.now();
-        await tg.send(`🧠 Switch -> <b>${d.goal === 'fish' ? '🎣 Fishing' : gatherLabel(d.gatherKind)}</b>\n${d.why}`).catch(() => {});
+        await tg.send(`🧠 ${who()} switch -> <b>${d.goal === 'fish' ? '🎣 Fishing' : gatherLabel(d.gatherKind)}</b>\n${d.why}`).catch(() => {});
       } else {
         const active = parseGoalKey(current) || d;
         ensureOnly(active.goal, { gatherKind: active.gatherKind });
