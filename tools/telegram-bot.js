@@ -17,6 +17,7 @@ const OUT = path.join(ROOT, 'recon');
 const PIDFILE = path.join(OUT, 'control', 'fishbot.pid');
 const GPIDFILE = path.join(OUT, 'control', 'gatherbot.pid');
 const OPIDFILE = path.join(OUT, 'control', 'orch.pid');
+const CPIDFILE = path.join(OUT, 'control', 'combatbot.pid');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let cli = null, lastAuth = 0, myPid = null;
@@ -28,6 +29,7 @@ function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } ca
 function pidOf(f) { const p = readJson(f); if (!p?.pid) return null; try { process.kill(p.pid, 0); return p.pid; } catch { return null; } }
 function botPid() { return pidOf(PIDFILE); }
 function gatherPid() { return pidOf(GPIDFILE); }
+function combatPid() { return pidOf(CPIDFILE); }
 function spawnBot(script, args, pidfile) {
   const child = cp.spawn('node', [path.join(ROOT, 'tools', script), ...args], { detached: true, stdio: 'ignore', cwd: ROOT });
   child.unref(); fs.writeFileSync(pidfile, JSON.stringify({ pid: child.pid, started: Date.now() }));
@@ -36,14 +38,16 @@ function spawnBot(script, args, pidfile) {
 
 // ---------- handlers ----------
 async function hStatus() {
-  const fr = botPid(), gr = gatherPid(), or = pidOf(OPIDFILE);
+  const fr = botPid(), gr = gatherPid(), cb = combatPid(), or = pidOf(OPIDFILE);
   const gk = readJson(GPIDFILE)?.kind; const gLbl = gk === 'rock' ? '⛏Mining' : gk === 'tree' ? '🪓Wood' : 'Gather';
-  let out = `🤖 <b>Status Bot Kintara</b>\n🧠 Auto: ${or ? '🟢 ON' : '🔴 OFF'} | Fishing: ${fr ? '🟢' : '🔴'} | ${gLbl}: ${gr ? '🟢' : '🔴'}`;
+  let out = `🤖 <b>Status Bot Kintara</b>\n🧠 Auto: ${or ? '🟢 ON' : '🔴 OFF'} | Fishing: ${fr ? '🟢' : '🔴'} | ${gLbl}: ${gr ? '🟢' : '🔴'} | ⚔️Combat: ${cb ? '🟢' : '🔴'}`;
   if (or) { const o = readJson(path.join(OUT, 'orchestrator-state.json')); if (o) out += `\n🎯 ${o.current} — ${o.why}`; }
   const s = readJson(path.join(OUT, 'bot-state.json'));
   if (fr && s) out += `\n🎣 fish: ${s.fish} | 🍳 cooked: ${s.cooked} | ✅ ${s.ok}/${s.casts} | 💰 ${s.sold || 0} | ⏱ ${s.ageMin}m`;
   const g = readJson(path.join(OUT, 'gather-state.json'));
   if (gr && g) out += `\n🪓 felled: ${g.felled} | 🪵 wood: ${g.wood} | 🪨 stone: ${g.stone} | coal: ${g.coal} | ⏱ ${g.ageMin}m`;
+  const cs = readJson(path.join(OUT, 'combat-state.json'));
+  if (cb && cs) out += `\n⚔️ kills: ${cs.kills} | 🗡️ hits: ${cs.hits} | 📈 +${cs.combatGain || 0}XP | ❤️ HP ${cs.hp} | 🧪 ${cs.potionsHealth || 0}H/${cs.potionsShield || 0}S | 🏃 ${cs.retreats || 0} | 📍 ${cs.region} | ⏱ ${cs.ageMin}m`;
   return out;
 }
 async function hSkills() {
@@ -71,13 +75,13 @@ async function hQuest() {
   return `📋 <b>Daily Quest</b> (${dq.day})\n` + lines.join('\n');
 }
 function hStartFish() {
-  if (gatherPid()) return '⚠️ Gather bot ON — /stop dulu (1 akun = 1 aktivitas).';
+  if (gatherPid() || combatPid()) return '⚠️ Bot lain ON — /stop dulu (1 akun = 1 aktivitas).';
   if (botPid()) return '🎣 Fishing bot udah ON.';
   const pid = spawnBot('bot-headless.js', ['s2'], PIDFILE);
   return `🎣 Fishing bot START (pid ${pid}). Antri ~10min lalu grind+cook. Cek /status.`;
 }
 function hStartGather(args) {
-  if (botPid()) return '⚠️ Fishing bot ON — /stop dulu (1 akun = 1 aktivitas).';
+  if (botPid() || combatPid()) return '⚠️ Bot lain ON — /stop dulu (1 akun = 1 aktivitas).';
   const kind = (args[0] === 'rock' || args[0] === 'stone' || args[0] === 'coal' || args[0] === 'mine') ? 'rock' : 'tree';
   const lbl = kind === 'rock' ? '⛏ mining stone/coal' : '🪓 chop wood';
   const running = gatherPid(); const cur = readJson(GPIDFILE);
@@ -92,10 +96,16 @@ function hAuto() {
   const pid = spawnBot('orchestrator.js', [], OPIDFILE);
   return `🧠 Orchestrator START (pid ${pid}) — auto-pilih fishing/gather by goal. /stop utk matikan.`;
 }
+function hStartCombat() {
+  if (botPid() || gatherPid() || pidOf(OPIDFILE)) return '⚠️ Bot lain ON — /stop dulu (1 akun = 1 aktivitas).';
+  if (combatPid()) return '⚔️ Combat bot udah ON.';
+  const pid = spawnBot('combat-bot.js', ['s2'], CPIDFILE);
+  return `⚔️ Combat bot START (pid ${pid}).\n🏦 Bank dulu (safety) → masuk Wilderness → hunt zombie.\n🛡️ Auto-potion + retreat saat HP kritis. Antri ~10min. Cek /status.\n\n<i>⚠️ Wilderness = PvP risk. Loot udah di-bank = aman walau mati.</i>`;
+}
 function hStop() {
   let msg = [];
   // matikan orchestrator dulu (biar gak restart bot)
-  for (const [name, pf] of [['Orchestrator', OPIDFILE], ['Fishing', PIDFILE], ['Gather', GPIDFILE]]) {
+  for (const [name, pf] of [['Orchestrator', OPIDFILE], ['Fishing', PIDFILE], ['Gather', GPIDFILE], ['Combat', CPIDFILE]]) {
     const pid = pidOf(pf);
     if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} try { fs.unlinkSync(pf); } catch {} msg.push(`🛑 ${name} STOP (pid ${pid})`); }
   }
@@ -104,8 +114,8 @@ function hStop() {
 function hHelp() {
   return `🤖 <b>Kintara Bot — Perintah</b>\n` +
     `/status — status bot & inventory\n/skills — XP & level skill\n/balance — gold/$KINS/resource\n/quest — daily quest\n` +
-    `/fish — fishing + cooking\n/gather — chop wood 🪓\n/mine — mining stone/coal ⛏\n/auto — orchestrator pilih otomatis 🧠\n/stop — STOP semua\n/help — bantuan\n\n` +
-    `<i>1 akun = 1 aktivitas (lebih aman anti-cheat). /combat segera.</i>`;
+    `/fish — fishing + cooking\n/gather — chop wood 🪓\n/mine — mining stone/coal ⛏\n/combat — hunt zombie Wilderness ⚔️\n/auto — orchestrator pilih otomatis 🧠\n/stop — STOP semua\n/help — bantuan\n\n` +
+    `<i>1 akun = 1 aktivitas (lebih aman anti-cheat). Combat = bank-first + auto-survival.</i>`;
 }
 
 const commands = {
@@ -113,7 +123,7 @@ const commands = {
   status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance,
   quest: hQuest, fish: hStartFish, stop: hStop,
   gather: hStartGather, chop: hStartGather, mine: () => hStartGather(['rock']),
-  auto: hAuto, combat: () => '⚔️ Combat lagi disiapkan (RE pesan combat WS + survival).',
+  auto: hAuto, combat: hStartCombat,
   sell: () => '💰 Sell aktif setelah tutorial selesai.',
 };
 
@@ -122,6 +132,7 @@ const MENU = [
   { command: 'fish', description: '🎣 Fishing + cooking' },
   { command: 'gather', description: '🪓 Chop wood' },
   { command: 'mine', description: '⛏ Mining stone/coal' },
+  { command: 'combat', description: '⚔️ Hunt zombie Wilderness' },
   { command: 'auto', description: '🧠 Auto-pilih aktivitas' },
   { command: 'stop', description: '⏹️ Stop semua bot' },
   { command: 'status', description: '📊 Status bot + inventory' },

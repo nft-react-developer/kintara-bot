@@ -1,13 +1,14 @@
 {
   "name": "kintara-bot",
   "version": "1.0.0",
-  "description": "Headless automation bot for Kintara.gg (Solana isometric MMO) — fishing, cooking, gathering (wood/stone/coal), banking, marketplace, daily quests, orchestrator, full Telegram control. No browser needed. RY GROUP.",
+  "description": "Headless automation bot for Kintara.gg (Solana isometric MMO) — fishing, cooking, gathering (wood/stone/coal), banking, marketplace, daily quests, Wilderness combat, orchestrator, full Telegram control. No browser needed. RY GROUP.",
   "main": "tools/telegram-bot.js",
   "scripts": {
     "start": "node tools/telegram-bot.js",
     "fish": "node tools/bot-headless.js",
     "gather": "node tools/gather-bot.js tree",
     "mine": "node tools/gather-bot.js rock",
+    "combat": "node tools/combat-bot.js",
     "quest": "node tools/daily-quest.js",
     "auto": "node tools/orchestrator.js"
   },

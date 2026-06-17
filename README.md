@@ -5,9 +5,9 @@
 ### a **RY GROUP** project
 
 Fully **headless** automation bot for [Kintara.gg](https://kintara.gg) — a Solana isometric MMO.
-**No browser needed.** Login pakai wallet, kontrol penuh dari **Telegram**.
+**No browser required.** Sign in with your wallet, control everything from **Telegram**.
 
-🎣 Fishing · 🍳 Cooking · 🪓 Woodcutting · ⛏ Mining (stone/coal) · 🏦 Banking · 💰 Marketplace · 📋 Daily Quest · 🧠 Auto-Orchestrator
+🎣 Fishing · 🍳 Cooking · 🪓 Woodcutting · ⛏ Mining (stone/coal) · ⚔️ Combat · 🏦 Banking · 💰 Marketplace · 📋 Daily Quests · 🧠 Auto-Orchestrator
 
 [![Node](https://img.shields.io/badge/node-%3E%3D18-43853d?logo=node.js&logoColor=white)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -20,63 +20,74 @@ Fully **headless** automation bot for [Kintara.gg](https://kintara.gg) — a Sol
 bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/kintara-bot/main/install.sh)
 ```
 
-Installer otomatis: clone repo → install deps → minta **2 hal saja** (wallet private key + Telegram bot token) → tulis `.env` (chmod 600) → start bot kontrol Telegram.
+The installer: clones the repo → installs dependencies → asks for **just 2 things** (wallet private key + Telegram bot token) → writes `.env` (chmod 600) → starts the Telegram control bot.
 
-**Non-interaktif:**
+**Non-interactive:**
 ```bash
 WALLET_PRIVATE_KEY=your_base58_key TELEGRAM_BOT_TOKEN=123456:AA... \
   bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/kintara-bot/main/install.sh)
 ```
 
-> 🔒 Private key kamu **tidak pernah keluar dari mesin** — hanya ditulis ke `.env` (chmod 600, git-ignored) untuk menandatangani login game secara lokal. **Cookie/session TIDAK diperlukan** — bot login sendiri dari private key.
+> 🔒 Your private key **never leaves your machine** — it is only written to `.env` (chmod 600, git-ignored) and used to sign the game login locally. **No cookie/session needed** — the bot authenticates itself from the private key.
 
-## 📱 Kontrol via Telegram
+## 📱 Control via Telegram
 
-Setelah install, buka bot Telegram kamu → `/start`:
+After install, open your Telegram bot → `/start`:
 
-| Command | Aksi |
-|---------|------|
+| Command | Action |
+|---------|--------|
 | `/fish` | 🎣 Fishing + auto-cooking |
 | `/gather` | 🪓 Chop wood (woodcutting) |
-| `/mine` | ⛏ Mining stone + coal |
-| `/auto` | 🧠 Orchestrator pilih aktivitas otomatis |
-| `/stop` | ⏹️ Stop semua bot |
-| `/status` | 📊 Status + inventory live |
-| `/skills` | 📈 Level & XP skill |
-| `/balance` | 💰 Gold / $KINS / resource |
-| `/quest` | 📋 Daily quest |
-| `/help` | ❓ Daftar command |
+| `/mine` | ⛏ Mine stone + coal |
+| `/combat` | ⚔️ Hunt Wilderness mobs (combat XP) |
+| `/auto` | 🧠 Orchestrator picks the activity automatically |
+| `/stop` | ⏹️ Stop all bots |
+| `/status` | 📊 Live status + inventory |
+| `/skills` | 📈 Skill levels & XP |
+| `/balance` | 💰 Gold / $KINS / resources |
+| `/quest` | 📋 Daily quests |
+| `/help` | ❓ Command list |
 
-> **1 akun = 1 aktivitas** (fishing **atau** gather) — lebih natural / aman anti-cheat.
+> **1 account = 1 activity** at a time (fishing **or** gather **or** combat) — more natural / safer against anti-cheat.
 
-## 🛠️ Cara Kerja (Headless, full reverse-engineered)
+## ⚔️ Combat & Survival
 
-Bot bicara langsung ke protokol Kintara — **tanpa render game / browser**:
+`/combat` hunts Wilderness mobs (zombies) for combat XP, with strict survival built in:
 
-- **Auth**: `/api/auth/challenge` → tanda-tangan ed25519 (wallet) → `/api/auth/verify` → session (`lib/walletAuth.js`).
-- **Realtime**: WebSocket presence (`wss://kintara.gg/ws/queue|presence`) — gerak (`pos`), region, snapshot, harvest (`lib/presenceWs.js`).
-- **Aksi**: fishing (`act:fish` + grant-fish-xp), gather (`harv`/`harv_hit` + actionProof), cooking (Roast Pit), banking (`bankSlots`), marketplace (`/api/marketplace/sell`).
+- **Bank-first** — all carried loot is deposited before entering the Wilderness, so a death costs nothing.
+- **HP monitoring** — health is tracked from server vitals in real time.
+- **Auto-potion** — drinks health/shield potions when HP drops below threshold.
+- **Auto-retreat** — falls back to the safe camp and exits to the Mainland when HP is critical.
+
+## 🛠️ How It Works
+
+The bot speaks the Kintara protocol directly — **no game render, no browser**:
+
+- **Auth**: `/api/auth/challenge` → ed25519 signature (wallet) → `/api/auth/verify` → session (`lib/walletAuth.js`).
+- **Realtime**: presence WebSocket (`wss://kintara.gg/ws/queue|presence`) — movement (`pos`), region, snapshots, harvesting (`lib/presenceWs.js`).
+- **Actions**: fishing (`act:fish` + grant-fish-xp), gathering (`harv`/`harv_hit` + action proof), cooking (Roast Pit), banking (`bankSlots`), marketplace (`/api/marketplace/sell`), combat (server-authoritative mob snapshots + `wm_ev` hits).
 
 ## 📋 Requirements
 
 - Node.js ≥ 18
-- Solana wallet (base58 private key) yang **hold ≥ 1.000 $KINS** (syarat main Kintara) + sudah **selesai tutorial** di game (unlock sell/quest).
-- Telegram bot token ([@BotFather](https://t.me/BotFather)).
+- A Solana wallet (base58 private key) that **holds ≥ 1,000 $KINS** (required to play Kintara) and has **completed the in-game tutorial** (unlocks selling/quests).
+- A Telegram bot token ([@BotFather](https://t.me/BotFather)).
 
-## 🧩 Manual run (tanpa Telegram)
+## 🧩 Manual Run (without Telegram)
 
 ```bash
 npm install
-cp .env.example .env   # isi WALLET_PRIVATE_KEY
-npm run fish     # fishing+cooking
+cp .env.example .env   # fill in WALLET_PRIVATE_KEY
+npm run fish     # fishing + cooking
 npm run gather   # wood
 npm run mine     # stone/coal
+npm run combat   # Wilderness hunting
 npm run auto     # orchestrator
 ```
 
 ## ⚠️ Disclaimer
 
-Automation tools bisa melanggar Terms of Service game. Pakai dengan risiko sendiri — project edukasi / riset. Combat (Wilderness mob) = **pending** (mob real-time client-sim, butuh game client — di luar scope headless).
+Automation tools may violate a game's Terms of Service. Use at your own risk — this is an educational / research project.
 
 ---
 

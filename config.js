@@ -38,14 +38,14 @@ function persistEnv(key, value) {
 }
 
 const config = {
-  // ---- Auth (Opsi A: cookie session, manual) ----
-  sessionCookie: process.env.KINTARA_SESSION_COOKIE || '', // copy dari DevTools setelah login wallet
+  // ---- Auth (Option A: cookie session, manual) ----
+  sessionCookie: process.env.KINTARA_SESSION_COOKIE || '', // copy from DevTools after wallet login
 
-  // ---- Auth (Opsi B: wallet signature, otomatis — TODO setelah HAR login tersedia) ----
-  walletPrivateKey: process.env.WALLET_PRIVATE_KEY || '', // base58 Solana secret key, HANYA di server lo sendiri
+  // ---- Auth (Option B: wallet signature, automatic — preferred) ----
+  walletPrivateKey: process.env.WALLET_PRIVATE_KEY || '', // base58 Solana secret key, stays on your own machine only
   walletAddress: process.env.WALLET_ADDRESS || '',
 
-  playerId: process.env.MY_PLAYER_ID || '', // auto-detected dari /api/auth/me jika kosong
+  playerId: process.env.MY_PLAYER_ID || '', // auto-detected from /api/auth/me when empty
 
   // ---- API hosts ----
   apiBase: process.env.KINTARA_API_BASE || 'https://kintara.gg',

@@ -21,3 +21,8 @@ npm-debug.log*
 .DS_Store
 /tmp/
 *.zip
+
+# nested install clone (contains real .env) + internal docs
+kintara-bot/
+docs/COMBAT_*.md
+docs/CORE_LOOP_TODO.md
