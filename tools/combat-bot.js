@@ -250,8 +250,8 @@ async function huntLoop(p) {
 
   while (p.ready && /^wild/.test(p.region)) {
     const sv = await survivalCheck(p);
-    if (sv === 'dead') return;
-    if (sv === 'retreat') { const r = await retreatToSafe(p); if (r === 'exited') return; continue; }
+    if (sv === 'dead') return 'dead';
+    if (sv === 'retreat') { const r = await retreatToSafe(p); if (r === 'exited') return 'exited'; continue; }
 
     const target = p.nearestMob();
     if (!target) { logT('nomob', 'gak ada mob hidup, nunggu respawn...'); await sleep(3000); continue; }
@@ -348,10 +348,19 @@ async function connectWithRetry() {
 
   for (;;) {
     const p = await connectWithRetry();
-    p.on('close', () => { stats.reconnects++; stats.phase = 'reconnect'; saveState(); log('⚠️ presence closed -> reconnect'); });
+    let expectedClose = false;
+    p.on('close', () => {
+      if (expectedClose) return;
+      stats.reconnects++;
+      stats.phase = 'reconnect';
+      saveState();
+      log('⚠️ presence closed -> reconnect');
+    });
     p.hp = 100; p.shield = 0;
     stats.phase = 'prep';
     stats.region = p.region;
+    stats.hp = 100;
+    stats.queueAhead = null;
     saveState();
     await sleep(2000);
 
@@ -375,11 +384,26 @@ async function connectWithRetry() {
     if (!entered) { log('🛑 gagal masuk wild — reconnect'); try { p.close(); } catch {} await sleep(5000); continue; }
 
     // === HUNT ===
-    try { await huntLoop(p); }
+    let outcome = null;
+    try { outcome = await huntLoop(p); }
     catch (e) { log('hunt err: ' + e.message.slice(0, 60)); }
+
+    if (outcome === 'dead') {
+      stats.phase = 'respawning_after_death';
+      stats.region = 'world';
+      stats.queueAhead = null;
+      stats.hp = 100;
+      saveState();
+      log('♻️ death recovery -> requeue same shard');
+      expectedClose = true;
+      try { p.close(); } catch {}
+      await sleep(4000);
+      continue;
+    }
 
     // keluar wild sebelum reconnect (aman)
     try { if (/^wild/.test(p.region)) { p.setRegion('world', NORTH_PORTAL.x, NORTH_PORTAL.z + 1); await sleep(2000); } } catch {}
+    expectedClose = true;
     try { p.close(); } catch {}
     saveState();
     await sleep(4000);

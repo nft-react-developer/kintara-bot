@@ -493,6 +493,7 @@ async function hStatus() {
       boot: 'boot',
       prep: 'prep',
       queue: cs.queueAhead != null ? `queue ${cs.queueAhead}` : 'queue',
+      respawning_after_death: 'respawning after death',
       requeue_after_death: cs.queueAhead != null ? `requeue after death ${cs.queueAhead}` : 'requeue after death',
       presence: 'presence',
       wild: 'wild',
