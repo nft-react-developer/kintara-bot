@@ -11,6 +11,7 @@ const cp = require('child_process');
 const { config } = require('../config');
 const tg = require('../lib/telegram');
 const { KintaraClient } = require('../lib/kintaraClient');
+const { levelFromTotalXp, formatSkillBandProgressShort, averageLevelFloor, preciseAverageLevel } = require('../lib/skillXp');
 const { login, isWalletBannedError } = require('../lib/walletAuth');
 const { getErrors } = require('../lib/errorbus');
 
@@ -321,11 +322,20 @@ async function hSkills() {
     const me = await c.me();
     spinLine = fmtSpinnerReady(me?.meta?.dailySpinnerLastMs);
   } catch { spinLine = '🎡 Spinner: status ?'; }
-  const avg = st.avg;
-  const unlock = (Number(avg) || 0) >= 5 ? '✅ unlocked (avg≥5)' : `🔒 requires avg 5 (now ${avg ?? '?'})`;
-  return `📊 <b>Skills</b> (avg lvl ${avg ?? '?'})\n` +
-    `⚔️ combat: ${xp.combat ?? 0}\n🪓 woodcutting: ${xp.woodcutting ?? 0}\n⛏ mining: ${xp.mining ?? 0}\n` +
-    `🎣 fishing: ${xp.fishing ?? 0}\n🍳 cooking: ${xp.cooking ?? 0}\n🔨 smithing: ${xp.smithing ?? 0}\n` +
+  const avg = Number.isFinite(Number(st.avg)) ? Number(st.avg) : averageLevelFloor(xp);
+  const avgPrecise = preciseAverageLevel(xp).toFixed(2);
+  const unlock = avg >= 5 ? '✅ spinner unlocked' : `🔒 spinner requires avg 5 (now ${avg})`;
+  const line = (icon, key, label) => {
+    const val = xp[key] || 0;
+    return `${icon} ${label}: lvl ${levelFromTotalXp(val)} • ${formatSkillBandProgressShort(val)}`;
+  };
+  return `📊 <b>Stats</b> (avg lvl ${avg} • precise ${avgPrecise})\n` +
+    `${line('⚔️', 'combat', 'combat')}\n` +
+    `${line('🪓', 'woodcutting', 'woodcutting')}\n` +
+    `${line('⛏', 'mining', 'mining')}\n` +
+    `${line('🎣', 'fishing', 'fishing')}\n` +
+    `${line('🍳', 'cooking', 'cooking')}\n` +
+    `${line('🔨', 'smithing', 'smithing')}\n` +
     `${spinLine}\n${unlock}`;
 }
 async function hBalance() {
@@ -649,14 +659,14 @@ function hStop() {
 }
 function hHelp() {
   return `🤖 <b>Kintara Bot — Commands</b>\n` +
-    `/status — bot status & inventory\n/skills — skill XP & levels\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
+    `/status — bot status & inventory\n/stats — skill levels, XP, avg level\n/skills — same as /stats\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
     `/fish — fishing + cooking\n/gather — woodcutting 🪓\n/mine — mining stone/coal/metal ⛏\n/combat — hunt Wilderness zombies ⚔️\n/auto — automatic orchestrator 🧠\n/stop — stop all bots\n/help — command list\n\n` +
     `<i>1 account = 1 activity (safer against anti-cheat). Combat uses bank-first + auto-survival.</i>`;
 }
 
 const commands = {
   start: () => hHelp(), help: () => hHelp(),
-  status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
+  status: hStatus, stats: hSkills, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
   quest: hQuest, diag: hDiag, fish: hStartFish, stop: hStop,
   spinner: hSpinner, spin: hSpinner,
   gather: hStartGather, chop: hStartGather, mine: () => hStartGather(['rock']),
@@ -673,6 +683,7 @@ const MENU = [
   { command: 'auto', description: '🧠 Auto activity orchestration' },
   { command: 'stop', description: '⏹️ Stop all bots' },
   { command: 'status', description: '📊 Bot status + inventory' },
+  { command: 'stats', description: '📈 Skill levels + XP' },
   { command: 'diag', description: '🩺 Auth, queue, tutorial' },
   { command: 'market', description: '🛒 Marketplace prices' },
   { command: 'version', description: '🧩 Game version watch' },
