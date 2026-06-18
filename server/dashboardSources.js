@@ -1,10 +1,9 @@
 // ============ DASHBOARD SOURCE CONFIG ============
-// Loads read-only recon sources from server/dashboard-bots.json.
-const fs = require('fs');
+// Loads read-only recon sources from EXPRESS_DASHBOARD_BOT.
 const path = require('path');
+const { config } = require('../config');
 
 const ROOT = path.join(__dirname, '..');
-const CONFIG_PATH = path.join(__dirname, 'dashboard-bots.json');
 
 function normalizeSource(source, index) {
   const id = String(source.id || `bot${index + 1}`).trim();
@@ -18,18 +17,18 @@ function normalizeSource(source, index) {
   };
 }
 
-function readDashboardConfig(configPath = CONFIG_PATH) {
+function readDashboardConfig(raw = config.expressDashboardBot) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (!Array.isArray(parsed)) throw new Error('dashboard-bots.json must contain an array');
+    const parsed = JSON.parse(raw || '[]');
+    if (!Array.isArray(parsed)) throw new Error('EXPRESS_DASHBOARD_BOT must contain a JSON array');
     return { sources: parsed, error: null };
   } catch (e) {
     return { sources: [], error: e.message };
   }
 }
 
-function getDashboardSources(configPath = CONFIG_PATH) {
-  const { sources, error } = readDashboardConfig(configPath);
+function getDashboardSources(raw = config.expressDashboardBot) {
+  const { sources, error } = readDashboardConfig(raw);
   if (error) return [{ id: 'config-error', name: 'Config error', reconPath: '', error }];
 
   const seen = new Set();
@@ -43,4 +42,4 @@ function getDashboardSources(configPath = CONFIG_PATH) {
     });
 }
 
-module.exports = { getDashboardSources, CONFIG_PATH };
+module.exports = { getDashboardSources };

@@ -60,6 +60,7 @@ const config = {
   // ---- Optional HTTP server ----
   expressServerEnabled: (process.env.EXPRESS_SERVER_ENABLED || 'false').toLowerCase() === 'true',
   expressServerPort: parseInt(process.env.EXPRESS_SERVER_PORT || '8898', 10),
+  expressDashboardBot: process.env.EXPRESS_DASHBOARD_BOT || '[]',
 
   // ---- Dashboard ----
   dashboardPort: parseInt(process.env.DASHBOARD_PORT || '8898', 10),

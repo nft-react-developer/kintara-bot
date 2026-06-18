@@ -72,7 +72,7 @@ function renderBots(bots) {
         </div>
         <div class="items">${items || '<span class="muted">No item state yet</span>'}</div>
       </article>`;
-  }).join('') || '<p class="muted">No bots configured. Add sources to server/dashboard-bots.json.</p>';
+  }).join('') || '<p class="muted">No bots configured. Add sources to EXPRESS_DASHBOARD_BOT in .env.</p>';
 }
 
 function renderLogSelectors() {
