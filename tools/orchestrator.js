@@ -21,6 +21,8 @@ const { login, isWalletBannedError } = require('../lib/walletAuth');
 const tg = require('../lib/telegram');
 const { config } = require('../config');
 const { pickPlayerName, pickPlayerId, playerLabel } = require('../lib/playerIdentity');
+const { installGracefulShutdown } = require('../lib/shutdown');
+const { stopPidFile } = require('../lib/processControl');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'recon');
@@ -37,6 +39,16 @@ const EVAL_MS = 60000;           // evaluate daily quest progress every minute; 
 const MIN_RUN_MS = 1500000;      // minimum 25 minutes per activity before switching to avoid queue thrashing
 
 let cli, lastAuth = 0, current = null, currentSince = 0, myPid = null, myName = '';
+const isShuttingDown = installGracefulShutdown({
+  log,
+  cleanup: async (signal) => {
+    log(`shutdown requested (${signal}) — stopping managed activity bots`);
+    stopPidFile(FPID, { signal: 'SIGTERM', forceAfterMs: 0 });
+    stopPidFile(GPID, { signal: 'SIGTERM', forceAfterMs: 0 });
+    stopPidFile(CPID, { signal: 'SIGTERM', forceAfterMs: 0 });
+    await sleep(1500);
+  },
+});
 async function client() {
   if (!cli || Date.now() - lastAuth > 1500000) {
     const a = await login();
@@ -125,17 +137,16 @@ async function claimReadyQuests(c, q) {
 function ensureOnly(activity, { gatherKind = 'all' } = {}) {
   // ensure only `activity` is running
   const fp = pidOf(FPID), gp = pidOf(GPID), combatPid = pidOf(CPID);
-  if (combatPid) { try { process.kill(combatPid, 'SIGKILL'); fs.unlinkSync(CPID); } catch {} }
+  if (combatPid) stopPidFile(CPID, { signal: 'SIGTERM' });
   if (activity === 'fish') {
-    if (gp) { try { process.kill(gp, 'SIGKILL'); fs.unlinkSync(GPID); } catch {} }
+    if (gp) stopPidFile(GPID, { signal: 'SIGTERM' });
     if (!pidOf(FPID)) { const c = cp.spawn('node', [path.join(ROOT, 'tools', 'bot-headless.js'), config.shard], { detached: true, stdio: 'ignore', cwd: ROOT }); c.unref(); fs.writeFileSync(FPID, JSON.stringify({ pid: c.pid, started: Date.now() })); log('▶️ START fishing (pid ' + c.pid + ')'); }
   } else if (activity === 'gather') {
     const kind = normalizeGatherKind(gatherKind);
     const cur = readJson(GPID);
-    if (fp) { try { process.kill(fp, 'SIGKILL'); fs.unlinkSync(FPID); } catch {} }
+    if (fp) stopPidFile(FPID, { signal: 'SIGTERM' });
     if (gp && normalizeGatherKind(cur?.kind) !== kind) {
-      try { process.kill(gp, 'SIGKILL'); } catch {}
-      try { fs.unlinkSync(GPID); } catch {}
+      stopPidFile(GPID, { signal: 'SIGTERM' });
       log(`↔️ switch gather kind ${normalizeGatherKind(cur?.kind)} -> ${kind}`);
     }
     if (!pidOf(GPID)) {
@@ -183,7 +194,7 @@ async function decide() {
   fs.writeFileSync(path.join(OUT, 'orchestrator.log'), '');
   await tg.send('🧠 <b>Orchestrator ON</b> — auto-selects activity by goal. Use /stop to turn it off.').catch(() => {});
   log('orchestrator start');
-  for (;;) {
+  for (; !isShuttingDown();) {
     try {
       const d = await decide();
       log(`evaluate: goal=${d.key} (${d.why}) | ${JSON.stringify(d.snapshot)}`);

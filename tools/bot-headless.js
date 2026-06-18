@@ -12,6 +12,7 @@ const { KintaraClient } = require('../lib/kintaraClient');
 const { login, isWalletBannedError } = require('../lib/walletAuth');
 const { config } = require('../config');
 const { pickPlayerName } = require('../lib/playerIdentity');
+const { installGracefulShutdown } = require('../lib/shutdown');
 
 const SHARD = process.argv[2] || config.shard;
 const OUT = path.join(__dirname, '..', 'recon');
@@ -28,7 +29,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PORTAL = { x: 61 - 30.5, z: 31 - 30.5 }; // mainland east -> pond
 
 let cli, auth;
+let currentPresence = null;
 const stats = { fish: 0, casts: 0, ok: 0, cooked: 0, sold: 0, rate: 0, reconnects: 0, started: Date.now() };
+const isShuttingDown = installGracefulShutdown({
+  log,
+  cleanup: async (signal) => {
+    log(`shutdown requested (${signal}) — closing presence websocket`);
+    try { currentPresence?.close(); } catch {}
+    await sleep(500);
+  },
+});
 
 function updatePlayerName(...sources) {
   playerName = pickPlayerName(...sources) || playerName;
@@ -42,9 +52,10 @@ async function freshAuth() {
 }
 
 async function connectWithRetry() {
-  for (let attempt = 1; ; attempt++) {
+  for (let attempt = 1; !isShuttingDown(); attempt++) {
     try {
       const p = new Presence(SHARD);
+      currentPresence = p;
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => { if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead); });
       await p.connect();
@@ -52,11 +63,13 @@ async function connectWithRetry() {
       return p;
     } catch (e) {
       if (isWalletBannedError(e)) throw e;
+      if (isShuttingDown()) throw e;
       log(`connect attempt ${attempt} failed: ${e.message.slice(0, 60)} — retry 15s`);
       await sleep(15000);
       if (attempt % 3 === 0) { try { await freshAuth(); log('re-auth cookie'); } catch {} }
     }
   }
+  throw new Error('shutdown requested');
 }
 
 async function gotoPond(p) {
@@ -134,7 +147,7 @@ async function sellExcess(itemType, reserve) {
 
 async function fishLoop(p) {
   let sinceManage = 0;
-  while (p.ready) {
+  while (p.ready && !isShuttingDown()) {
     if (p.region !== 'pond') { if (!await gotoPond(p)) { await sleep(3000); continue; } }
     await catchOne(p);
     saveState(p.region);
@@ -161,14 +174,16 @@ async function fishLoop(p) {
   log('BOT START player=' + playerLogLabel() + ' fish0=' + me0?.backpack?.fish);
   stats.fish = me0?.backpack?.fish || 0;
 
-  for (;;) { // supervisor: reconnect forever
+  for (; !isShuttingDown();) { // supervisor: reconnect forever
     const p = await connectWithRetry();
+    currentPresence = p;
     let closed = false;
     p.on('close', () => { if (!closed) { closed = true; stats.reconnects++; log('⚠️ presence closed -> reconnect'); } });
     await sleep(2000);
     await gotoPond(p);
     await fishLoop(p); // exits when p.ready=false (disconnect)
     try { p.close(); } catch {}
+    if (currentPresence === p) currentPresence = null;
     await sleep(3000);
   }
 })().catch((e) => { log('FATAL ' + e.message); process.exit(1); });

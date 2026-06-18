@@ -13,6 +13,8 @@ const { KintaraClient } = require('../lib/kintaraClient');
 const { login } = require('../lib/walletAuth');
 const { config } = require('../config');
 const { pickPlayerName, pickPlayerId, playerLabel, htmlEscape } = require('../lib/playerIdentity');
+const { installGracefulShutdown } = require('../lib/shutdown');
+const { stopPidFile } = require('../lib/processControl');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'recon');
@@ -22,8 +24,22 @@ const OPIDFILE = path.join(OUT, 'control', 'orch.pid');
 const CPIDFILE = path.join(OUT, 'control', 'combatbot.pid');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DAILY_SPINNER_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const MANAGED_BOTS = [
+  ['Orchestrator', OPIDFILE],
+  ['Fishing', PIDFILE],
+  ['Gather', GPIDFILE],
+  ['Combat', CPIDFILE],
+];
 
 let cli = null, lastAuth = 0, myPid = null, myName = '', spinnerBusy = false;
+const isShuttingDown = installGracefulShutdown({
+  log: console.log,
+  cleanup: async (signal) => {
+    console.log(`[telegram-bot] shutdown requested (${signal}) — stopping managed bots`);
+    for (const [, pidfile] of MANAGED_BOTS) stopPidFile(pidfile, { signal: 'SIGTERM', forceAfterMs: 0 });
+    await sleep(1500);
+  },
+});
 async function client() {
   if (!cli || Date.now() - lastAuth > 1500000) {
     const a = await login();
@@ -228,7 +244,7 @@ function hStartGather(args) {
   const lbl = kind === 'rock' ? '⛏ mine stone/coal' : '🪓 chop wood';
   const running = gatherPid(); const cur = readJson(GPIDFILE);
   if (running && cur?.kind === kind) return `${lbl} is already ON.`;
-  if (running) { try { process.kill(running, 'SIGKILL'); } catch {} try { fs.unlinkSync(GPIDFILE); } catch {} } // switch kind
+  if (running) stopPidFile(GPIDFILE, { signal: 'SIGTERM' }); // switch kind
   const pid = spawnBot('gather-bot.js', [kind, config.shard], GPIDFILE);
   fs.writeFileSync(GPIDFILE, JSON.stringify({ pid, kind, started: Date.now() })); // save kind
   return `${lbl} START (pid ${pid})${running ? ' [switched from ' + (cur?.kind || '?') + ']' : ''}. Queues for ~10min. Check /status.`;
@@ -250,9 +266,9 @@ function hAuto() {
 function hStop() {
   let msg = [];
   // stop orchestrator first so it does not restart bots
-  for (const [name, pf] of [['Orchestrator', OPIDFILE], ['Fishing', PIDFILE], ['Gather', GPIDFILE], ['Combat', CPIDFILE]]) {
+  for (const [name, pf] of MANAGED_BOTS) {
     const pid = pidOf(pf);
-    if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} try { fs.unlinkSync(pf); } catch {} msg.push(`🛑 ${name} STOP (pid ${pid})`); }
+    if (pid) { stopPidFile(pf, { signal: 'SIGTERM' }); msg.push(`🛑 ${name} STOP (pid ${pid})`); }
   }
   return msg.length ? msg.join('\n') : '🔴 All bots are already OFF.';
 }
@@ -304,7 +320,7 @@ async function syncMenu() {
   await syncMenu();
   await tg.send('🤖 <b>Kintara Bot online!</b> Send /help for the command list.').catch(() => {});
   console.log('[telegram-bot] polling...');
-  for (;;) {
+  for (; !isShuttingDown();) {
     try { await tg.pollCommands(commands); } catch (e) { console.error('poll err', e.message); }
     await sleep(2000);
   }

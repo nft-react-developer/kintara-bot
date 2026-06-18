@@ -57,6 +57,10 @@ const config = {
   telegramToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
 
+  // ---- Optional HTTP server ----
+  expressServerEnabled: (process.env.EXPRESS_SERVER_ENABLED || 'false').toLowerCase() === 'true',
+  expressServerPort: parseInt(process.env.EXPRESS_SERVER_PORT || '8898', 10),
+
   // ---- Dashboard ----
   dashboardPort: parseInt(process.env.DASHBOARD_PORT || '8898', 10),
   dashUser: process.env.DASH_USER || 'admin',

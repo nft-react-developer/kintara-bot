@@ -20,6 +20,7 @@ const { Presence } = require('../lib/presenceWs');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { login, isWalletBannedError } = require('../lib/walletAuth');
 const bank = require('../lib/bank');
+const { installGracefulShutdown } = require('../lib/shutdown');
 
 const SHARD = process.argv[2] || config.shard || 's2';
 const OUT = path.join(__dirname, '..', 'recon');
@@ -65,6 +66,7 @@ function saveState(extra = {}) {
 }
 
 let cli;
+let currentPresence = null;
 let healthLeft = 0, shieldLeft = 0;   // Filled from the backpack at startup (server-authoritative).
 let lastPotionAt = 0;
 let mats = { gold: 0, wood: 0, stone: 0, coal: 0, metal: 0 };
@@ -77,6 +79,15 @@ const bankCount = (bp, type) => {
 // Health potion = HoT +20/tick x5 = +100 total, client-driven.
 // consume-potion only decrements the potion, while healing is applied client-side through save-hp.
 const HEALTH_POTION_TOTAL = 100;
+const isShuttingDown = installGracefulShutdown({
+  log,
+  cleanup: async (signal) => {
+    log(`shutdown requested (${signal}) — closing presence websocket`);
+    try { currentPresence?.close(); } catch {}
+    try { fs.unlinkSync(PIDFILE); } catch {}
+    await sleep(500);
+  },
+});
 
 async function refreshPotionCounts() {
   try {
@@ -242,7 +253,7 @@ async function huntLoop(p) {
   saveState();
   log(`🧟 detected ${aliveCount} live mobs. Starting hunt.`);
 
-  while (p.ready && /^wild/.test(p.region)) {
+  while (p.ready && /^wild/.test(p.region) && !isShuttingDown()) {
     const sv = await survivalCheck(p);
     if (sv === 'dead') return;
     if (sv === 'retreat') { const r = await retreatToSafe(p); if (r === 'exited') return; continue; }
@@ -287,9 +298,10 @@ async function huntLoop(p) {
 }
 
 async function connectWithRetry() {
-  for (let attempt = 1; ; attempt++) {
+  for (let attempt = 1; !isShuttingDown(); attempt++) {
     try {
       const p = new Presence(SHARD);
+      currentPresence = p;
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => {
         stats.phase = 'queue';
@@ -324,10 +336,12 @@ async function connectWithRetry() {
       return p;
     } catch (e) {
       if (isWalletBannedError(e)) throw e;
+      if (isShuttingDown()) throw e;
       log(`connect attempt ${attempt} failed: ${e.message.slice(0, 60)} — retry 15s`);
       await sleep(15000);
     }
   }
+  throw new Error('shutdown requested');
 }
 
 (async () => {
@@ -340,8 +354,9 @@ async function connectWithRetry() {
   saveState();
   log('COMBAT BOT START pid=' + a.player?.id + ' shard=' + SHARD);
 
-  for (;;) {
+  for (; !isShuttingDown();) {
     const p = await connectWithRetry();
+    currentPresence = p;
     p.on('close', () => { stats.reconnects++; stats.phase = 'reconnect'; saveState(); log('⚠️ presence closed -> reconnect'); });
     p.hp = 100; p.shield = 0;
     stats.phase = 'prep';
@@ -375,6 +390,7 @@ async function connectWithRetry() {
     // Exit Wilderness before reconnecting.
     try { if (/^wild/.test(p.region)) { p.setRegion('world', NORTH_PORTAL.x, NORTH_PORTAL.z + 1); await sleep(2000); } } catch {}
     try { p.close(); } catch {}
+    if (currentPresence === p) currentPresence = null;
     saveState();
     await sleep(4000);
   }
