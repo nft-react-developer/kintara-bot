@@ -60,7 +60,9 @@ async function pickBestShard(force = false) {
     const list = (r.servers || []).filter((x) => x && x.id != null);
     if (!list.length) return null;
     // s1 ("Kintara Club") menolak koneksi bot (403) — skip server restricted ini.
-    const RESTRICTED = new Set([1]);
+    // s1-s3 level-gated (butuh lvl 20+), bot ditolak walau queue 0. Skip sampai punya akses.
+    // Bisa di-override lewat env KINTARA_ALLOW_LOW_SERVERS=1 (mis. setelah premium / lvl 20).
+    const RESTRICTED = process.env.KINTARA_ALLOW_LOW_SERVERS === '1' ? new Set() : new Set([1, 2, 3]);
     let pool = list.filter((x) => !RESTRICTED.has(Number(x.id)));
     if (!pool.length) pool = list;
     // prioritas: queue terkecil, lalu yang tidak full
@@ -845,12 +847,15 @@ async function hServers() {
   if (!list.length) return '\u26a0\ufe0f No server data.';
   list.sort((a, b) => Number(a.queueLength || 0) - Number(b.queueLength || 0));
   const lines = ['\ud83c\udf10 <b>Servers \u2014 Live Queue</b>', ''];
+  const levelGated = process.env.KINTARA_ALLOW_LOW_SERVERS === '1' ? new Set() : new Set([1, 2, 3]);
   for (const sv of list) {
-    const mark = sv.full ? '\ud83d\udd34' : '\ud83d\udfe2';
-    lines.push(`${mark} s${sv.id} ${sv.name || ''} \u2014 queue <b>${sv.queueLength ?? '?'}</b>${sv.full ? ' (full)' : ''}`);
+    const locked = levelGated.has(Number(sv.id));
+    const mark = locked ? '🔒' : (sv.full ? '\ud83d\udd34' : '\ud83d\udfe2');
+    const tag = locked ? ' (lvl 20+)' : (sv.full ? ' (full)' : '');
+    lines.push(`${mark} s${sv.id} ${sv.name || ''} — queue <b>${sv.queueLength ?? '?'}</b>${tag}`);
   }
   const best = await pickBestShard(true);
-  lines.push('', `\u2705 Auto-pick on start: <b>${best || '?'}</b> (lowest queue)`);
+  lines.push('', `✅ Auto-pick on start: <b>${best || '?'}</b> (lowest joinable queue)`, '<i>🔒 s1–s3 need level 20+ — auto-skipped.</i>');
   return lines.join('\n');
 }
 
