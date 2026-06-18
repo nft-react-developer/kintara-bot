@@ -52,6 +52,7 @@ const config = {
   apiBase: process.env.KINTARA_API_BASE || 'https://kintara.gg',
   fanoutBase: process.env.KINTARA_FANOUT_BASE || 'https://ktra-server-b.onrender.com',
   shard: process.env.KINTARA_SHARD || 's2',
+  shardFallbacks: process.env.KINTARA_SHARD_FALLBACKS || 's1,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12',
 
   // ---- Telegram ----
   telegramToken: process.env.TELEGRAM_BOT_TOKEN || '',
