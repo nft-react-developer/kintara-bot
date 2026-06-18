@@ -49,6 +49,33 @@ async function ensureLoginOk() {
   }
 }
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
+
+// Pilih shard dengan queue paling sedikit (auto). Return string 's<N>' atau null.
+let _bestShardCache = { ts: 0, shard: null };
+async function pickBestShard(force = false) {
+  if (!force && Date.now() - _bestShardCache.ts < 60000 && _bestShardCache.shard) return _bestShardCache.shard;
+  try {
+    const c = await client();
+    const r = await c.servers();
+    const list = (r.servers || []).filter((x) => x && x.id != null);
+    if (!list.length) return null;
+    // s1 ("Kintara Club") menolak koneksi bot (403) — skip server restricted ini.
+    const RESTRICTED = new Set([1]);
+    let pool = list.filter((x) => !RESTRICTED.has(Number(x.id)));
+    if (!pool.length) pool = list;
+    // prioritas: queue terkecil, lalu yang tidak full
+    pool.sort((a, b) => (Number(a.queueLength || 0) - Number(b.queueLength || 0)) || (a.full === b.full ? 0 : a.full ? 1 : -1));
+    const best = pool[0];
+    const shard = 's' + best.id;
+    _bestShardCache = { ts: Date.now(), shard };
+    return shard;
+  } catch { return null; }
+}
+async function resolveShard() {
+  const best = await pickBestShard();
+  return best || config.shard || 's2';
+}
+
 function pidOf(f) {
   const p = readJson(f);
   if (!p?.pid) return null;
@@ -200,25 +227,26 @@ function syncDesiredFromLive() {
   }
   if (dirty) saveAutoreviveState(normalizeDesiredState(state));
 }
-function desiredServiceSpec(name, meta = {}) {
-  if (name === 'fish') return { script: 'bot-headless.js', args: [config.shard || 's2'], pidfile: PIDFILE, label: 'Fishing bot' };
-  if (name === 'gather') return { script: 'gather-bot.js', args: [meta.kind || 'tree', config.shard || 's2'], pidfile: GPIDFILE, label: meta.kind === 'rock' ? 'Mining bot' : 'Gather bot' };
-  if (name === 'auto') return { script: 'orchestrator.js', args: [], pidfile: OPIDFILE, label: 'Orchestrator' };
-  if (name === 'combat') return { script: 'combat-bot.js', args: [config.shard || 's2'], pidfile: CPIDFILE, label: 'Combat bot' };
+async function desiredServiceSpec(name, meta = {}) {
+  const shard = await resolveShard();
+  if (name === 'fish') return { script: 'bot-headless.js', args: [shard], pidfile: PIDFILE, label: 'Fishing bot', shard };
+  if (name === 'gather') return { script: 'gather-bot.js', args: [meta.kind || 'tree', shard], pidfile: GPIDFILE, label: meta.kind === 'rock' ? 'Mining bot' : 'Gather bot', shard };
+  if (name === 'auto') return { script: 'orchestrator.js', args: [], pidfile: OPIDFILE, label: 'Orchestrator', shard };
+  if (name === 'combat') return { script: 'combat-bot.js', args: [shard], pidfile: CPIDFILE, label: 'Combat bot', shard };
   return null;
 }
 async function ensureDesiredServices() {
   const state = normalizeDesiredState(readAutoreviveState());
   saveAutoreviveState(state);
   for (const [name, meta] of Object.entries(state)) {
-    const spec = desiredServiceSpec(name, meta);
+    const spec = await desiredServiceSpec(name, meta);
     if (!spec) continue;
     if (pidOf(spec.pidfile)) continue;
     const pid = spawnBot(spec.script, spec.args, spec.pidfile);
     if (name === 'gather') {
       fs.writeFileSync(spec.pidfile, JSON.stringify({ pid, kind: meta.kind || 'tree', started: Date.now() }));
     }
-    await tg.send(`♻️ ${spec.label} auto-restarted (pid ${pid})`).catch(() => {});
+    await tg.send(`♻️ ${spec.label} auto-restarted (pid ${pid}) on shard ${spec.shard || '?'}`).catch(() => {});
   }
 }
 function readVersionState() { return readJson(VERSION_STATEFILE) || {}; }
@@ -753,8 +781,9 @@ async function hStartFish() {
   if (gatherPid() || combatPid() || pidOf(OPIDFILE)) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   if (botPid()) return '🎣 Fishing bot is already running.';
   replaceMainDesired('fish', {});
-  const pid = spawnBot('bot-headless.js', [config.shard || 's2'], PIDFILE);
-  return `🎣 Fishing bot STARTED (pid ${pid}). Queue time is about ~10 minutes, then it will fish and cook automatically. Check /status.`;
+  const shard = await resolveShard();
+  const pid = spawnBot('bot-headless.js', [shard], PIDFILE);
+  return `🎣 Fishing bot STARTED (pid ${pid}) on shard <b>${shard}</b> (lowest queue). Queue time is about ~10 minutes, then it will fish and cook automatically. Check /status.`;
 }
 async function hStartGather(args) {
   const authErr = await ensureLoginOk();
@@ -766,9 +795,10 @@ async function hStartGather(args) {
   if (running && cur?.kind === kind) return `${lbl} is already running.`;
   if (running) { try { process.kill(running, 'SIGKILL'); } catch {} try { fs.unlinkSync(GPIDFILE); } catch {} } // switch kind
   replaceMainDesired('gather', { kind });
-  const pid = spawnBot('gather-bot.js', [kind, config.shard || 's2'], GPIDFILE);
+  const shard = await resolveShard();
+  const pid = spawnBot('gather-bot.js', [kind, shard], GPIDFILE);
   fs.writeFileSync(GPIDFILE, JSON.stringify({ pid, kind, started: Date.now() })); // simpan kind
-  return `${lbl} STARTED (pid ${pid})${running ? ` [switched from ${cur?.kind || '?'}]` : ''}. Queue time is about ~10 minutes. Check /status.`;
+  return `${lbl} STARTED (pid ${pid}) on shard <b>${shard}</b> (lowest queue)${running ? ` [switched from ${cur?.kind || '?'}]` : ''}. Queue time is about ~10 minutes. Check /status.`;
 }
 async function hAuto() {
   const authErr = await ensureLoginOk();
@@ -785,8 +815,9 @@ async function hStartCombat() {
   if (botPid() || gatherPid() || pidOf(OPIDFILE)) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   if (combatPid()) return '⚔️ Combat bot is already running.';
   replaceMainDesired('combat', {});
-  const pid = spawnBot('combat-bot.js', [config.shard || 's2'], CPIDFILE);
-  return `⚔️ Combat bot STARTED (pid ${pid}).\n🏦 It will bank first for safety, then enter the Wilderness and hunt zombies.\n🛡️ Auto-potion and retreat are enabled when HP gets critical. Queue time is about ~10 minutes. Check /status.\n\n<i>⚠️ Wilderness is PvP risk. Banked loot stays safe even if you die.</i>`;
+  const shard = await resolveShard();
+  const pid = spawnBot('combat-bot.js', [shard], CPIDFILE);
+  return `⚔️ Combat bot STARTED (pid ${pid}) on shard <b>${shard}</b> (lowest queue).\n🏦 It will bank first for safety, then enter the Wilderness and hunt zombies.\n🛡️ Auto-potion and retreat are enabled when HP gets critical. Queue time is about ~10 minutes. Check /status.\n\n<i>⚠️ Wilderness is PvP risk. Banked loot stays safe even if you die.</i>`;
 }
 function hStop() {
   let msg = [];
@@ -804,10 +835,30 @@ function hHelp() {
     `<i>1 account = 1 activity (safer against anti-cheat). Combat uses bank-first + auto-survival.</i>`;
 }
 
+async function hServers() {
+  const authErr = await ensureLoginOk();
+  if (authErr) return authErr;
+  const c = await client();
+  let r;
+  try { r = await c.servers(); } catch (e) { return `\u26a0\ufe0f Failed to fetch servers: ${e.message.slice(0, 60)}`; }
+  const list = (r.servers || []).filter((x) => x && x.id != null);
+  if (!list.length) return '\u26a0\ufe0f No server data.';
+  list.sort((a, b) => Number(a.queueLength || 0) - Number(b.queueLength || 0));
+  const lines = ['\ud83c\udf10 <b>Servers \u2014 Live Queue</b>', ''];
+  for (const sv of list) {
+    const mark = sv.full ? '\ud83d\udd34' : '\ud83d\udfe2';
+    lines.push(`${mark} s${sv.id} ${sv.name || ''} \u2014 queue <b>${sv.queueLength ?? '?'}</b>${sv.full ? ' (full)' : ''}`);
+  }
+  const best = await pickBestShard(true);
+  lines.push('', `\u2705 Auto-pick on start: <b>${best || '?'}</b> (lowest queue)`);
+  return lines.join('\n');
+}
+
 const commands = {
   start: () => hHelp(), help: () => hHelp(),
   status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
   quest: hQuest, diag: hDiag, fishing: hStartFish, fish: hStartFish, stop: hStop,
+  server: hServers, servers: hServers,
   spinner: hSpinner, spin: hSpinner,
   gather: hStartGather, chop: hStartGather, mine: () => hStartGather(['rock']),
   auto: hAuto, combat: hStartCombat,
@@ -824,6 +875,7 @@ const MENU = [
   { command: 'stop', description: '⏹️ Stop all bots' },
   { command: 'status', description: '📊 Bot status + inventory' },
   { command: 'diag', description: '🩺 Auth, queue, tutorial' },
+  { command: 'server', description: '🌐 Live server queues' },
   { command: 'market', description: '🛒 Marketplace prices' },
   { command: 'version', description: '🧩 Game version watch' },
   { command: 'skills', description: '📈 Skill levels & XP' },
