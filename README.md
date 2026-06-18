@@ -22,6 +22,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/kintara-bot/main
 
 The installer: clones the repo → installs dependencies → asks for **just 2 things** (wallet private key + Telegram bot token) → writes `.env` (chmod 600) → starts the Telegram control bot.
 
+**What you get after install:**
+
+- A running **Telegram-controlled bot** on your machine
+- Wallet-based login with **no browser and no manual cookie handling**
+- Ready-to-use commands for farming, combat, quests, market checks, spinner, and diagnostics
+- A clean `.env` setup so you can restart later with `npm start`
+
 **Non-interactive:**
 ```bash
 WALLET_PRIVATE_KEY=your_base58_key TELEGRAM_BOT_TOKEN=123456:AA... \
@@ -29,6 +36,17 @@ WALLET_PRIVATE_KEY=your_base58_key TELEGRAM_BOT_TOKEN=123456:AA... \
 ```
 
 > 🔒 Your private key **never leaves your machine** — it is only written to `.env` (chmod 600, git-ignored) and used to sign the game login locally. **No cookie/session needed** — the bot authenticates itself from the private key.
+
+## 🚀 Quick Start
+
+1. Create a Telegram bot with [@BotFather](https://t.me/BotFather)
+2. Run the one-line installer on your VPS / Linux server
+3. Paste:
+   - `WALLET_PRIVATE_KEY`
+   - `TELEGRAM_BOT_TOKEN`
+4. Open your Telegram bot
+5. Type `/start` then `/help`
+6. Run `/auto` to let the bot handle the activity loop automatically
 
 ## 📱 Control via Telegram
 
@@ -83,6 +101,7 @@ The bot speaks the Kintara protocol directly — **no game render, no browser**:
 - Node.js ≥ 18
 - A Solana wallet (base58 private key) that **holds ≥ 1,000 $KINS** (required to play Kintara) and has **completed the in-game tutorial** (unlocks selling/quests).
 - A Telegram bot token ([@BotFather](https://t.me/BotFather)).
+- Linux VPS / server recommended for 24/7 uptime
 
 ## 🧩 Manual Run (without Telegram)
 
@@ -97,6 +116,13 @@ npm run auto     # orchestrator
 ```
 
 `/market`, `/spinner`, `/version`, `/diag`, and the richer status/inline flows are exposed through the Telegram controller (`npm start` / `node tools/telegram-bot.js`).
+
+## 🩺 Troubleshooting
+
+- **Bot does not respond on Telegram**: make sure `TELEGRAM_BOT_TOKEN` is correct, then restart with `npm start`
+- **Login/auth fails**: re-check `WALLET_PRIVATE_KEY` format; it must be base58 and valid for the Kintara wallet
+- **Marketplace sell blocked**: your character may still be below the required seller skill, or the item is not in an inventory slot
+- **Merchant gold trade unavailable**: this is currently controlled server-side by Kintara, not a local bot bug
 
 ## ⚠️ Disclaimer
 
