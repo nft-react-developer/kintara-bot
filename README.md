@@ -4,8 +4,8 @@
 
 ### a **RY GROUP** project
 
-Fully **headless** automation bot for [Kintara.gg](https://kintara.gg) — a Solana isometric MMO.
-**No browser required.** Sign in with your wallet, control everything from **Telegram**.
+Production-ready, **headless** automation for [Kintara.gg](https://kintara.gg).
+No browser. No cookie babysitting. Just wallet login, Telegram control, and a clean one-line install.
 
 🎣 Fishing · 🍳 Cooking · 🪓 Woodcutting · ⛏ Mining (stone/coal/metal) · ⚔️ Combat · 🏦 Banking · 💰 Marketplace · 🎡 Daily Spinner · 📋 Daily Quests · 🧠 Auto-Orchestrator
 
@@ -20,7 +20,7 @@ Fully **headless** automation bot for [Kintara.gg](https://kintara.gg) — a Sol
 bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/kintara-bot/main/install.sh)
 ```
 
-The installer: clones the repo → installs dependencies → asks for **just 2 things** (wallet private key + Telegram bot token) → writes `.env` (chmod 600) → starts the Telegram control bot.
+The installer clones the repo, installs dependencies, asks for **just 2 inputs** (wallet private key + Telegram bot token), writes `.env` with locked permissions, and starts the Telegram control bot.
 
 **What you get after install:**
 
@@ -41,16 +41,21 @@ WALLET_PRIVATE_KEY=your_base58_key TELEGRAM_BOT_TOKEN=123456:AA... \
 
 1. Create a Telegram bot with [@BotFather](https://t.me/BotFather)
 2. Run the one-line installer on your VPS / Linux server
-3. Paste:
-   - `WALLET_PRIVATE_KEY`
-   - `TELEGRAM_BOT_TOKEN`
+3. Paste your `WALLET_PRIVATE_KEY` and `TELEGRAM_BOT_TOKEN`
 4. Open your Telegram bot
 5. Type `/start` then `/help`
 6. Run `/auto` to let the bot handle the activity loop automatically
 
+## Why This Bot
+
+- **Actually headless**: no browser automation layer, no Playwright dependency for the core flow, no fragile DOM selectors
+- **Telegram-first UX**: run, monitor, stop, inspect, and troubleshoot from chat
+- **Safer automation model**: 1 account = 1 activity, bank-first combat flow, auto-revive/keepalive, and version-watch safety checks
+- **Built for real VPS use**: one-line installer, persistent config, and clean restart path
+
 ## 📱 Control via Telegram
 
-After install, open your Telegram bot → `/start`:
+After install, open your Telegram bot and type `/start`:
 
 | Command | Action |
 |---------|--------|
@@ -70,7 +75,7 @@ After install, open your Telegram bot → `/start`:
 | `/diag` | 🩺 Auth / queue / tutorial diagnostics |
 | `/help` | ❓ Command list |
 
-> **1 account = 1 activity** at a time (fishing **or** gather **or** combat) — more natural / safer against anti-cheat.
+> **1 account = 1 activity** at a time: fishing, gathering, or combat. This is more natural and safer against anti-cheat heuristics.
 
 ## ✨ Included Features
 
@@ -78,10 +83,11 @@ After install, open your Telegram bot → `/start`:
 - **Daily `/spinner`**: claims the free spin wheel reward and reports cooldown / paid-spin ticker info.
 - **Smart `/auto`**: orchestrator chooses the best activity automatically instead of locking you into one loop.
 - **Realtime `/status`**: shows current bot state, inventory snapshot, balance, and spinner readiness.
+- **Version watchdog**: monitors game version drift and auto-pauses automation when Kintara updates.
 
 ## ⚔️ Combat & Survival
 
-`/combat` hunts Wilderness mobs (zombies) for combat XP, with strict survival built in:
+`/combat` hunts Wilderness mobs for combat XP with survival-first safeguards built in:
 
 - **Bank-first** — all carried loot is deposited before entering the Wilderness, so a death costs nothing.
 - **HP monitoring** — health is tracked from server vitals in real time.
@@ -90,7 +96,7 @@ After install, open your Telegram bot → `/start`:
 
 ## 🛠️ How It Works
 
-The bot speaks the Kintara protocol directly — **no game render, no browser**:
+The bot talks to the Kintara protocol directly, with **no game render and no browser automation layer**:
 
 - **Auth**: `/api/auth/challenge` → ed25519 signature (wallet) → `/api/auth/verify` → session (`lib/walletAuth.js`).
 - **Realtime**: presence WebSocket (`wss://kintara.gg/ws/queue|presence`) — movement (`pos`), region, snapshots, harvesting (`lib/presenceWs.js`).
@@ -99,11 +105,11 @@ The bot speaks the Kintara protocol directly — **no game render, no browser**:
 ## 📋 Requirements
 
 - Node.js ≥ 18
-- A Solana wallet (base58 private key) that **holds ≥ 1,000 $KINS** (required to play Kintara) and has **completed the in-game tutorial** (unlocks selling/quests).
+- A Solana wallet (base58 private key) that **holds ≥ 1,000 $KINS** and has **completed the in-game tutorial**
 - A Telegram bot token ([@BotFather](https://t.me/BotFather)).
 - Linux VPS / server recommended for 24/7 uptime
 
-## 🧩 Manual Run (without Telegram)
+## 🧩 Manual Run
 
 ```bash
 npm install
@@ -115,14 +121,14 @@ npm run combat   # Wilderness hunting
 npm run auto     # orchestrator
 ```
 
-`/market`, `/spinner`, `/version`, `/diag`, and the richer status/inline flows are exposed through the Telegram controller (`npm start` / `node tools/telegram-bot.js`).
+`/market`, `/spinner`, `/version`, `/diag`, and the richer inline flows are exposed through the Telegram controller (`npm start` or `node tools/telegram-bot.js`).
 
 ## 🩺 Troubleshooting
 
-- **Bot does not respond on Telegram**: make sure `TELEGRAM_BOT_TOKEN` is correct, then restart with `npm start`
-- **Login/auth fails**: re-check `WALLET_PRIVATE_KEY` format; it must be base58 and valid for the Kintara wallet
+- **Bot does not respond on Telegram**: verify `TELEGRAM_BOT_TOKEN`, then restart with `npm start`
+- **Login/auth fails**: re-check `WALLET_PRIVATE_KEY`; it must be a valid base58 Kintara wallet key
 - **Marketplace sell blocked**: your character may still be below the required seller skill, or the item is not in an inventory slot
-- **Merchant gold trade unavailable**: this is currently controlled server-side by Kintara, not a local bot bug
+- **Merchant gold trade unavailable**: this is controlled server-side by Kintara, not by the bot
 
 ## ⚠️ Disclaimer
 
