@@ -8,6 +8,7 @@
     "fish": "node tools/bot-headless.js",
     "gather": "node tools/gather-bot.js tree",
     "mine": "node tools/gather-bot.js rock",
+    "combat": "node tools/combat-bot.js",
     "quest": "node tools/daily-quest.js",
     "auto": "node tools/orchestrator.js",
     "combat": "node tools/combat-bot.js",

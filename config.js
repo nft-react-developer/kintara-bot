@@ -39,11 +39,11 @@ function persistEnv(key, value) {
 }
 
 const config = {
-  // ---- Auth (Option A: manual session cookie) ----
+  // ---- Auth (Option A: cookie session, manual) ----
   sessionCookie: process.env.KINTARA_SESSION_COOKIE || '', // copy from DevTools after wallet login
 
-  // ---- Auth (Option B: automatic wallet signature) ----
-  walletPrivateKey: process.env.WALLET_PRIVATE_KEY || '', // base58 Solana secret key; keep it only on your own server
+  // ---- Auth (Option B: wallet signature, automatic — preferred) ----
+  walletPrivateKey: process.env.WALLET_PRIVATE_KEY || '', // base58 Solana secret key, stays on your own machine only
   walletAddress: process.env.WALLET_ADDRESS || '',
 
   playerId: process.env.MY_PLAYER_ID || '', // auto-detected from /api/auth/me when empty
@@ -107,8 +107,8 @@ const config = {
   combatMinHealthPotions: parseInt(process.env.COMBAT_MIN_HEALTH_POTIONS || '6', 10),
   combatMinShieldPotions: parseInt(process.env.COMBAT_MIN_SHIELD_POTIONS || '2', 10),
 
-  // ---- Core-loop FABRICATION (client-authoritative). RISK: may violate ToS / anti-cheat. ----
-  // Master kill switch: all fabricated actions are disabled when this is false.
+  // ---- Core-loop FABRICATION (client-authoritative). RISIKO: langgar ToS / anti-cheat. ----
+  // Master kill-switch: SEMUA aksi fabricated mati kalau ini false.
   fabricateEnabled: (process.env.FABRICATE_ENABLED || 'false').toLowerCase() === 'true',
 
   // Auto-gather: increases resources and skill XP via save-backpack/save-skills.

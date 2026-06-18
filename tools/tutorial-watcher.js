@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
 const { login, isWalletBannedError } = require('../lib/walletAuth');
@@ -48,7 +49,7 @@ async function monitorInWorld(page, cli, initialTutorial) {
   let lastTutorial = initialTutorial;
   let lastHint = '';
   let hintGoneCount = 0;
-  await tg.send(`✅ Entered world. Current tutorial step: ${lastTutorial}`).catch(() => {});
+  await tg.send(`✅ Masuk world. Tutorial step saat ini: ${lastTutorial}`).catch(() => {});
   for (;;) {
     const me = await cli.me().catch(() => ({}));
     const tutorialStep = me?.tutorialStep ?? lastTutorial;
@@ -57,7 +58,7 @@ async function monitorInWorld(page, cli, initialTutorial) {
     if (tutorialStep !== lastTutorial) {
       lastTutorial = tutorialStep;
       saveState({ phase: 'in_world', tutorialStep, hint, enteredWorld: true });
-      await tg.send(`📈 Tutorial changed to step ${tutorialStep}${hint ? `\n${hint.slice(0, 220)}` : ''}`).catch(() => {});
+      await tg.send(`📈 Tutorial berubah ke step ${tutorialStep}${hint ? `\n${hint.slice(0, 220)}` : ''}`).catch(() => {});
     }
     if (hint && hint !== lastHint) {
       lastHint = hint;
@@ -68,7 +69,7 @@ async function monitorInWorld(page, cli, initialTutorial) {
       hintGoneCount += 1;
       if (hintGoneCount >= 4 && lastTutorial > initialTutorial) {
         saveState({ phase: 'completed_or_hidden', tutorialStep: lastTutorial, enteredWorld: true });
-        await tg.send(`🎉 Tutorial watcher: tutorial is likely complete or the tutorial panel is hidden. Last step: ${lastTutorial}`).catch(() => {});
+        await tg.send(`🎉 Tutorial watcher: tutorial kemungkinan sudah selesai / panel tutorial sudah hilang. Step terakhir: ${lastTutorial}`).catch(() => {});
         return;
       }
     } else {
@@ -103,7 +104,7 @@ async function monitorInWorld(page, cli, initialTutorial) {
         if (shouldNotify) {
           lastQueue = ahead;
           lastQueueNoticeAt = Date.now();
-          await tg.send(`🚪 Queue update: ${ahead} ahead on ${config.shard}`).catch(() => {});
+          await tg.send(`🚪 Queue update: ${ahead} ahead di ${config.shard}`).catch(() => {});
         }
       }
     } catch {}
@@ -115,7 +116,7 @@ async function monitorInWorld(page, cli, initialTutorial) {
     if (!ok) {
       const body = await page.evaluate(() => (document.body?.innerText || '').slice(0, 2000)).catch(() => '');
       saveState({ phase: 'timeout', tutorialStep: initialTutorial, enteredWorld: false, body });
-      await tg.send(`⏳ Tutorial watcher timeout: not in world yet.\nLast queue position: ${lastQueue ?? '?'}`).catch(() => {});
+      await tg.send(`⏳ Tutorial watcher timeout: belum tembus masuk world.\nQueue terakhir: ${lastQueue ?? '?'}`).catch(() => {});
       return;
     }
     saveState({ phase: 'in_world', tutorialStep: initialTutorial, enteredWorld: true });
@@ -126,7 +127,7 @@ async function monitorInWorld(page, cli, initialTutorial) {
   }
 })().catch(async (e) => {
   saveState({ phase: 'error', error: e.message, enteredWorld: false });
-  if (isWalletBannedError(e)) await tg.send('⛔ Tutorial watcher failed to start: wallet is banned by the server.').catch(() => {});
+  if (isWalletBannedError(e)) await tg.send('⛔ Tutorial watcher gagal start: wallet kena ban server.').catch(() => {});
   else await tg.send(`⚠️ Tutorial watcher error: ${e.message}`).catch(() => {});
   log('FATAL ' + (e.stack || e.message));
   process.exit(1);

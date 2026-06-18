@@ -25,18 +25,18 @@ else
 fi
 cd "$DIR"
 
-# --- dependencies ---
+# --- deps ---
 echo "📦 installing dependencies..."
 npm install --no-audit --no-fund --omit=optional
 
-# --- .env, when missing ---
+# --- .env (only if missing) ---
 if [ ! -f .env ]; then
   WK="${WALLET_PRIVATE_KEY:-}"
   TT="${TELEGRAM_BOT_TOKEN:-}"
-  if [ -z "$WK" ]; then read -rsp "🔑 Solana WALLET_PRIVATE_KEY (base58, hidden input): " WK </dev/tty; echo; fi
+  if [ -z "$WK" ]; then read -rsp "🔑 Solana WALLET_PRIVATE_KEY (base58, hidden): " WK </dev/tty; echo; fi
   if [ -z "$TT" ]; then read -rp  "💬 TELEGRAM_BOT_TOKEN (from @BotFather): " TT </dev/tty; fi
   cp .env.example .env
-  # safe injection using | as delimiter; base58/token values do not contain |
+  # safe inject (use | as delimiter; base58/token values never contain |)
   sed -i "s|^WALLET_PRIVATE_KEY=.*|WALLET_PRIVATE_KEY=${WK}|" .env
   sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TT}|" .env
   chmod 600 .env
@@ -45,7 +45,7 @@ else
   echo "ℹ️  .env already exists — skipped."
 fi
 
-# --- start Telegram control bot in the background ---
+# --- start telegram control bot (background) ---
 echo "🚀 starting Telegram control bot..."
 mkdir -p recon/control
 nohup node tools/telegram-bot.js > recon/telegram.log 2>&1 &
@@ -53,6 +53,6 @@ echo $! > recon/control/telegram.pid
 sleep 2
 echo ""
 echo "✅ DONE! Control bot is running (pid $(cat recon/control/telegram.pid))."
-echo "   Open your Telegram bot, then send /start and /help."
-echo "   Command: /fish /gather /mine /auto /stop /status /skills /balance /quest"
+echo "   Open your Telegram bot, type /start then /help."
+echo "   Commands: /fish /gather /mine /combat /auto /stop /status /skills /balance /quest"
 echo "   Log: $DIR/recon/telegram.log"
