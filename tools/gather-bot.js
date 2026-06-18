@@ -47,6 +47,10 @@ function saveState(extra = {}) {
   if (extra.phase !== undefined) stats.phase = extra.phase;
   if (extra.queueAhead !== undefined) stats.queueAhead = extra.queueAhead;
 }
+function trackAccountMeta(me) {
+  const lastMs = me?.meta?.dailySpinnerLastMs;
+  if (lastMs !== null && lastMs !== undefined) stats.dailySpinnerLastMs = lastMs;
+}
 
 let cli;
 async function connectWithRetry() {
@@ -74,6 +78,7 @@ async function connectWithRetry() {
 async function persistLoot(loot, yld = 1) {
   try {
     const st = await gs.fetchState(cli); const bp = st.backpack; const slots = bp.invSlots || [];
+    trackAccountMeta(st.raw);
     let put = false;
     for (const s of slots) if (s && s.t === loot) { s.n += yld; put = true; break; }
     if (!put) { const e = slots.findIndex((s) => !s); if (e >= 0) slots[e] = { t: loot, n: yld }; }

@@ -106,7 +106,21 @@ async function decide() {
   if (needFishQuest) { goal = 'fish'; why = 'unfinished daily fishing quest'; }
   else if (gatherSkillLow && (woodLow || stoneLow)) { goal = 'gather'; why = 'woodcutting/mining progression and materials are still low'; }
   else { goal = 'fish'; why = 'default: fishing currently has the best XP/value profile'; }
-  return { goal, why, snapshot: { wood: bp.wood, stone: bp.stone, coal: bp.coal, fish: bp.fish, woodcutting: xp.woodcutting, mining: xp.mining, fishing: xp.fishing, avg: st.avg } };
+  return {
+    goal,
+    why,
+    snapshot: {
+      wood: bp.wood,
+      stone: bp.stone,
+      coal: bp.coal,
+      fish: bp.fish,
+      woodcutting: xp.woodcutting,
+      mining: xp.mining,
+      fishing: xp.fishing,
+      avg: st.avg,
+      dailySpinnerLastMs: me?.meta?.dailySpinnerLastMs ?? null,
+    },
+  };
 }
 
 (async () => {

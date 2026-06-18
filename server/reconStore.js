@@ -21,6 +21,8 @@ const ACTIVITY_LABELS = {
   tutorial: 'Tutorial Watcher',
 };
 
+const FREE_SPINNER_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+
 function safeStat(filePath) {
   try { return fs.statSync(filePath); } catch { return null; }
 }
@@ -94,6 +96,46 @@ function buildLevels(states) {
   };
 }
 
+function buildSpinner(states) {
+  const snapshot = states.orchestrator.data?.snapshot || {};
+  const avg = Number(snapshot.avg);
+  const lastRaw = snapshot.dailySpinnerLastMs
+    ?? states.fishing.data?.dailySpinnerLastMs
+    ?? states.gather.data?.dailySpinnerLastMs
+    ?? states.combat.data?.dailySpinnerLastMs;
+  const lastMs = lastRaw === null || lastRaw === undefined || lastRaw === '' ? null : Number(lastRaw);
+
+  if (Number.isFinite(avg) && avg < 5) {
+    return {
+      status: 'locked',
+      label: `Locked until avg level 5 (now ${avg})`,
+      lastMs: Number.isFinite(lastMs) ? lastMs : null,
+      readyAtMs: null,
+      remainingMs: null,
+    };
+  }
+
+  if (!Number.isFinite(lastMs)) {
+    return {
+      status: 'unknown',
+      label: 'Free spinner status unknown',
+      lastMs: null,
+      readyAtMs: null,
+      remainingMs: null,
+    };
+  }
+
+  const readyAtMs = lastMs + FREE_SPINNER_COOLDOWN_MS;
+  const remainingMs = Math.max(0, readyAtMs - Date.now());
+  return {
+    status: remainingMs <= 0 ? 'ready' : 'waiting',
+    label: remainingMs <= 0 ? 'Free spin ready' : 'Free spin cooling down',
+    lastMs,
+    readyAtMs,
+    remainingMs,
+  };
+}
+
 function listLogFiles(reconPath) {
   try {
     return fs.readdirSync(reconPath)
@@ -153,6 +195,7 @@ function readBotSummary(source) {
     activity: activityFromState(latest, states),
     playerName: states.fishing.data?.playerName || states.combat.data?.playerName || extractPlayerName(source.reconPath) || 'Unknown player',
     levels: buildLevels(states),
+    spinner: buildSpinner(states),
     inventory: buildInventory(states),
     state: Object.fromEntries(Object.entries(states).map(([key, value]) => [key, value.data])),
     logs,

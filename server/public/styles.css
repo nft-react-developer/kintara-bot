@@ -75,6 +75,17 @@ button, select { background: var(--panel-2); color: var(--text); border: 1px sol
 .badge.active { background: color-mix(in srgb, var(--good) 25%, #064e3b); }
 .badge.stale { background: color-mix(in srgb, var(--warn) 25%, #713f12); }
 .badge.offline, .badge.missing, .badge.config-error { background: color-mix(in srgb, var(--bad) 25%, #7f1d1d); }
+.spinner {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #334155;
+  font-size: 13px;
+}
+.spinner.ready { background: color-mix(in srgb, var(--good) 25%, #064e3b); color: #dcfce7; }
+.spinner.waiting { background: color-mix(in srgb, var(--warn) 25%, #713f12); color: #fef3c7; }
+.spinner.locked, .spinner.unknown { background: color-mix(in srgb, var(--bad) 20%, #334155); color: #fecdd3; }
 .kv { display: grid; grid-template-columns: 120px 1fr; gap: 8px; color: var(--muted); font-size: 14px; }
 .kv b { color: var(--text); font-weight: 600; }
 .items { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

@@ -63,6 +63,10 @@ const stats = {
 function saveState(extra = {}) {
   try { fs.writeFileSync(STATEFILE, JSON.stringify({ ...stats, ...extra, ageMin: Math.round((Date.now() - stats.started) / 60000) }, null, 2)); } catch {}
 }
+function trackAccountMeta(me) {
+  const lastMs = me?.meta?.dailySpinnerLastMs;
+  if (lastMs !== null && lastMs !== undefined) stats.dailySpinnerLastMs = lastMs;
+}
 
 let cli;
 let healthLeft = 0, shieldLeft = 0;   // diisi dari backpack saat start (server authoritative)
@@ -81,6 +85,7 @@ const HEALTH_POTION_TOTAL = 100;
 async function refreshPotionCounts() {
   try {
     const me = await cli.me(); const bp = me.backpack || {};
+    trackAccountMeta(me);
     healthLeft = Number(bp.potion_health) || 0;
     shieldLeft = Number(bp.potion_shield) || 0;
     mats = {

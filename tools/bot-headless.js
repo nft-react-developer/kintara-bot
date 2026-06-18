@@ -68,6 +68,10 @@ const COOKED_RESERVE = 40, SELL_COOKED_AT = 90; // simpan 40 cooked utk healing/
 let fishPrice = 1;
 
 function saveState(region) { fs.writeFileSync(path.join(OUT, 'bot-state.json'), JSON.stringify({ ...stats, region, ageMin: Math.round((Date.now() - stats.started) / 60000) })); }
+function trackAccountMeta(me) {
+  const lastMs = me?.meta?.dailySpinnerLastMs;
+  if (lastMs !== null && lastMs !== undefined) stats.dailySpinnerLastMs = lastMs;
+}
 
 async function catchOne(p) {
   const me = p.pondTile();
@@ -105,6 +109,7 @@ async function cookBatch(p, n) {
 async function sellExcess(itemType, reserve) {
   try {
     const me = await cli.me(); const bp = me?.backpack || {};
+    trackAccountMeta(me);
     const slots = bp.invSlots || []; let idx = -1, have = 0;
     for (let i = 0; i < slots.length; i++) if (slots[i] && slots[i].t === itemType) { idx = i; have = slots[i].n; break; }
     if (idx < 0 || have <= reserve) return;
@@ -127,6 +132,7 @@ async function fishLoop(p) {
       sinceManage = 0;
       try {
         const me = await cli.me(); const bp = me?.backpack || {};
+        trackAccountMeta(me);
         stats.fish = bp.fish || 0; stats.cooked = bp.cooked_fish_meat || 0;
         if (bp.fish >= COOK_AT && p.ready) await cookBatch(p, COOK_BATCH);
         if (bp.fish >= SELL_FISH_AT) await sellExcess('fish', FISH_RESERVE);
@@ -141,6 +147,7 @@ async function fishLoop(p) {
   fs.writeFileSync(path.join(OUT, 'bot.log'), '');
   await freshAuth();
   const me0 = await cli.me().catch(() => ({}));
+  trackAccountMeta(me0);
   log('BOT START pid=' + auth.player?.id + ' fish0=' + me0?.backpack?.fish);
   stats.fish = me0?.backpack?.fish || 0;
 

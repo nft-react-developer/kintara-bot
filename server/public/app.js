@@ -23,6 +23,23 @@ function valueOrDash(value) {
   return value === null || value === undefined || value === '' ? '—' : value;
 }
 
+function fmtDuration(ms) {
+  if (ms === null || ms === undefined) return '—';
+  const totalMinutes = Math.max(0, Math.ceil(Number(ms) / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours <= 0) return `${minutes}m`;
+  if (minutes <= 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
+
+function spinnerText(spinner) {
+  if (!spinner) return '—';
+  if (spinner.status === 'ready') return 'Ready now';
+  if (spinner.status === 'waiting') return `Ready in ${fmtDuration(spinner.remainingMs)}`;
+  return spinner.label || 'Unknown';
+}
+
 const STATUS_TOOLTIPS = {
   Active: 'Active means the recon data changed within the last 5 minutes.',
   Stale: 'Stale means recon data exists, but it has not changed for 5 to 30 minutes.',
@@ -63,11 +80,12 @@ function renderBots(bots) {
           <span class="badge ${esc(bot.status)}">${esc(bot.status)}</span>
         </div>
         <div class="kv">
-          <span>Player</span><b>${esc(valueOrDash(bot.name))}</b>
+          <span>Player</span><b>${esc(valueOrDash(bot.playerName))}</b>
           <span>Activity</span><b>${esc(valueOrDash(bot.activity))}</b>
           <span>Avg level</span><b>${esc(valueOrDash(bot.levels?.avg))}</b>
           <span>Fishing XP</span><b>${esc(valueOrDash(bot.levels?.fishing))}</b>
           <span>Mining XP</span><b>${esc(valueOrDash(bot.levels?.mining))}</b>
+          <span>Free spinner</span><b><span class="spinner ${esc(bot.spinner?.status || 'unknown')}">${esc(spinnerText(bot.spinner))}</span></b>
           <span>Last seen</span><b>${fmtAge(bot.lastSeenMs)}</b>
         </div>
         <div class="items">${items || '<span class="muted">No item state yet</span>'}</div>
