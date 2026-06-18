@@ -24,11 +24,50 @@ const OUT = path.join(ROOT, 'recon');
 const CTRL = path.join(OUT, 'control');
 const FPID = path.join(CTRL, 'fishbot.pid'), GPID = path.join(CTRL, 'gatherbot.pid');
 const CPID = path.join(CTRL, 'combatbot.pid');
+const OPID = path.join(CTRL, 'orch.pid');
 const STATEFILE = path.join(OUT, 'orchestrator-state.json');
 const log = (...a) => { const s = `[${new Date().toISOString().slice(11, 19)}] ORCH ${a.join(' ')}`; console.log(s); fs.appendFileSync(path.join(OUT, 'orchestrator.log'), s + '\n'); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-const pidOf = (f) => { const p = readJson(f); if (!p?.pid) return null; try { process.kill(p.pid, 0); return p.pid; } catch { return null; } };
+const pidOf = (f) => {
+  const p = readJson(f);
+  if (!p?.pid) return null;
+  try {
+    process.kill(p.pid, 0);
+    return p.pid;
+  } catch {
+    try { fs.unlinkSync(f); } catch {}
+    return null;
+  }
+};
+
+function killDuplicateScriptProcesses(script) {
+  const target = path.join(ROOT, 'tools', script);
+  try {
+    const rows = cp.execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const row of rows) {
+      const m = row.match(/^(\d+)\s+(.*)$/);
+      if (!m) continue;
+      const pid = Number(m[1]);
+      const args = m[2];
+      if (!pid || pid === process.pid) continue;
+      if (args.includes(target) || args.includes(`tools/${script}`)) {
+        try { process.kill(pid, 'SIGKILL'); } catch {}
+      }
+    }
+  } catch {}
+}
+
+function spawnDetached(script, args, pidfile, extra = {}) {
+  killDuplicateScriptProcesses(script);
+  const child = cp.spawn('node', [path.join(ROOT, 'tools', script), ...args], { detached: true, stdio: 'ignore', cwd: ROOT });
+  child.unref();
+  fs.writeFileSync(pidfile, JSON.stringify({ pid: child.pid, started: Date.now(), ...extra }));
+  return child.pid;
+}
 
 const EVAL_MS = 600000;          // evaluasi tiap 10 menit (switch hemat)
 const MIN_RUN_MS = 1500000;      // minimal 25 menit per aktivitas sebelum boleh switch (hindari antri bolak-balik)
@@ -45,10 +84,10 @@ function ensureOnly(activity) {
   if (combatPid) { try { process.kill(combatPid, 'SIGKILL'); fs.unlinkSync(CPID); } catch {} }
   if (activity === 'fish') {
     if (gp) { try { process.kill(gp, 'SIGKILL'); fs.unlinkSync(GPID); } catch {} }
-    if (!pidOf(FPID)) { const c = cp.spawn('node', [path.join(ROOT, 'tools', 'bot-headless.js'), config.shard || 's2'], { detached: true, stdio: 'ignore', cwd: ROOT }); c.unref(); fs.writeFileSync(FPID, JSON.stringify({ pid: c.pid, started: Date.now() })); log('▶️ START fishing (pid ' + c.pid + ')'); }
+    if (!pidOf(FPID)) { const pid = spawnDetached('bot-headless.js', [config.shard || 's2'], FPID); log('▶️ START fishing (pid ' + pid + ')'); }
   } else if (activity === 'gather') {
     if (fp) { try { process.kill(fp, 'SIGKILL'); fs.unlinkSync(FPID); } catch {} }
-    if (!pidOf(GPID)) { const c = cp.spawn('node', [path.join(ROOT, 'tools', 'gather-bot.js'), 'all', config.shard || 's2'], { detached: true, stdio: 'ignore', cwd: ROOT }); c.unref(); fs.writeFileSync(GPID, JSON.stringify({ pid: c.pid, started: Date.now() })); log('▶️ START gather-all (pid ' + c.pid + ')'); }
+    if (!pidOf(GPID)) { const pid = spawnDetached('gather-bot.js', ['all', config.shard || 's2'], GPID); log('▶️ START gather-all (pid ' + pid + ')'); }
   }
 }
 
@@ -72,6 +111,9 @@ async function decide() {
 
 (async () => {
   fs.mkdirSync(CTRL, { recursive: true });
+  killDuplicateScriptProcesses('orchestrator.js');
+  fs.writeFileSync(OPID, JSON.stringify({ pid: process.pid, started: Date.now() }));
+  process.on('exit', () => { try { fs.unlinkSync(OPID); } catch {} });
   fs.writeFileSync(path.join(OUT, 'orchestrator.log'), '');
   await tg.send('🧠 <b>Orchestrator ON</b> — auto-pilih aktivitas by goal. /stop utk matikan.').catch(() => {});
   log('orchestrator start');
