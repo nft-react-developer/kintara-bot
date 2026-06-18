@@ -407,7 +407,12 @@ async function hStatus() {
   lines.push('');
   lines.push('📦 <b>Session</b>');
   if (fr && s && isFreshState(s)) lines.push(`🎣 fish ${s.ok || 0}/${s.casts || 0} | 🎒 ${s.fish || 0} | 🍳 ${s.cooked || 0} | 💰 ${s.sold || 0} | ⏱ ${fmtAgeMin(s.ageMin)}`);
-  if (gr && g && isFreshState(g, 60 * 60 * 1000)) lines.push(`🪓 felled ${g.felled || 0} | 🪵 ${g.wood || 0} (+${g.gainedWood || 0}) | 🪨 ${g.stone || 0} (+${g.gainedStone || 0}) | ⬛ ${g.coal || 0} (+${g.gainedCoal || 0}) | 🔩 ${g.metal || 0} (+${g.gainedMetal || 0}) | ⏱ ${fmtAgeMin(g.ageMin)}`);
+  if (gr && g && isFreshState(g, 60 * 60 * 1000)) {
+    const phaseLabel = g.phase === 'queue'
+      ? (g.queueAhead != null ? `queue ${g.queueAhead}` : 'queue')
+      : g.phase || null;
+    lines.push(`🪓 felled ${g.felled || 0} | 🪵 ${g.wood || 0} (+${g.gainedWood || 0}) | 🪨 ${g.stone || 0} (+${g.gainedStone || 0}) | ⬛ ${g.coal || 0} (+${g.gainedCoal || 0}) | 🔩 ${g.metal || 0} (+${g.gainedMetal || 0})${phaseLabel ? ` | 📍 ${phaseLabel}` : ''} | ⏱ ${fmtAgeMin(g.ageMin)}`);
+  }
   if (cb && cs && isFreshState(cs, 60 * 60 * 1000)) {
     const phaseMap = {
       boot: 'boot',
@@ -867,6 +872,6 @@ async function syncMenu() {
       try { await ensureDesiredServices(); } catch (e) { console.error('keepalive err', e.message); }
       nextKeepaliveAt = Date.now() + KEEPALIVE_POLL_MS;
     }
-    await sleep(2000);
+    await sleep(150);
   }
 })().catch((e) => { console.error('FATAL', e.message); process.exit(1); });
