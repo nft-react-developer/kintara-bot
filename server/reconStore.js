@@ -96,13 +96,25 @@ function buildLevels(states) {
   };
 }
 
+function pickDailySpinnerLastMs(states) {
+  const candidates = [
+    states.orchestrator.data?.snapshot,
+    states.fishing.data,
+    states.gather.data,
+    states.combat.data,
+  ];
+  for (const item of candidates) {
+    if (item && Object.prototype.hasOwnProperty.call(item, 'dailySpinnerLastMs')) {
+      return { found: true, value: item.dailySpinnerLastMs };
+    }
+  }
+  return { found: false, value: null };
+}
+
 function buildSpinner(states) {
   const snapshot = states.orchestrator.data?.snapshot || {};
   const avg = Number(snapshot.avg);
-  const lastRaw = snapshot.dailySpinnerLastMs
-    ?? states.fishing.data?.dailySpinnerLastMs
-    ?? states.gather.data?.dailySpinnerLastMs
-    ?? states.combat.data?.dailySpinnerLastMs;
+  const { found, value: lastRaw } = pickDailySpinnerLastMs(states);
   const lastMs = lastRaw === null || lastRaw === undefined || lastRaw === '' ? null : Number(lastRaw);
 
   if (Number.isFinite(avg) && avg < 5) {
@@ -112,6 +124,26 @@ function buildSpinner(states) {
       lastMs: Number.isFinite(lastMs) ? lastMs : null,
       readyAtMs: null,
       remainingMs: null,
+    };
+  }
+
+  if (!found) {
+    return {
+      status: 'unknown',
+      label: 'Free spinner status unknown',
+      lastMs: null,
+      readyAtMs: null,
+      remainingMs: null,
+    };
+  }
+
+  if (lastMs === null) {
+    return {
+      status: 'ready',
+      label: 'Free spin ready',
+      lastMs: null,
+      readyAtMs: null,
+      remainingMs: 0,
     };
   }
 

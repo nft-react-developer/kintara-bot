@@ -48,8 +48,8 @@ function saveState(extra = {}) {
   if (extra.queueAhead !== undefined) stats.queueAhead = extra.queueAhead;
 }
 function trackAccountMeta(me) {
-  const lastMs = me?.meta?.dailySpinnerLastMs;
-  if (lastMs !== null && lastMs !== undefined) stats.dailySpinnerLastMs = lastMs;
+  if (!me || (!me.ok && !me.player && !me.backpack && !me.meta)) return;
+  stats.dailySpinnerLastMs = me?.meta?.dailySpinnerLastMs ?? null;
 }
 
 let cli;

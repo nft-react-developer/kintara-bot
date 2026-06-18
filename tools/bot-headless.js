@@ -69,8 +69,8 @@ let fishPrice = 1;
 
 function saveState(region) { fs.writeFileSync(path.join(OUT, 'bot-state.json'), JSON.stringify({ ...stats, region, ageMin: Math.round((Date.now() - stats.started) / 60000) })); }
 function trackAccountMeta(me) {
-  const lastMs = me?.meta?.dailySpinnerLastMs;
-  if (lastMs !== null && lastMs !== undefined) stats.dailySpinnerLastMs = lastMs;
+  if (!me || (!me.ok && !me.player && !me.backpack && !me.meta)) return;
+  stats.dailySpinnerLastMs = me?.meta?.dailySpinnerLastMs ?? null;
 }
 
 async function catchOne(p) {
