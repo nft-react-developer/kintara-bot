@@ -10,6 +10,7 @@ const path = require('path');
 const cp = require('child_process');
 const tg = require('../lib/telegram');
 const { KintaraClient } = require('../lib/kintaraClient');
+const { levelFromTotalXp, formatSkillBandProgressShort, averageLevelFloor, preciseAverageLevel } = require('../lib/skillXp');
 const { login } = require('../lib/walletAuth');
 const { config } = require('../config');
 const { pickPlayerName, pickPlayerId, playerLabel, htmlEscape } = require('../lib/playerIdentity');
