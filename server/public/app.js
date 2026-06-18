@@ -63,7 +63,7 @@ function renderBots(bots) {
           <span class="badge ${esc(bot.status)}">${esc(bot.status)}</span>
         </div>
         <div class="kv">
-          <span>Player</span><b>${esc(valueOrDash(bot.playerName))}</b>
+          <span>Player</span><b>${esc(valueOrDash(bot.name))}</b>
           <span>Activity</span><b>${esc(valueOrDash(bot.activity))}</b>
           <span>Avg level</span><b>${esc(valueOrDash(bot.levels?.avg))}</b>
           <span>Fishing XP</span><b>${esc(valueOrDash(bot.levels?.fishing))}</b>
