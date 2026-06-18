@@ -272,13 +272,29 @@ async function hStatus() {
   }
   return lines.join('\n');
 }
+function fmtSpinnerReady(lastMs) {
+  const COOLDOWN = 12 * 3600 * 1000;
+  const next = (Number(lastMs) || 0) + COOLDOWN;
+  const left = next - Date.now();
+  if (left <= 0) return '🎡 Spinner: ✅ FREE SPIN READY — ketik /spinner';
+  const h = Math.floor(left / 3600000);
+  const m = Math.round((left % 3600000) / 60000);
+  return `🎡 Spinner: ⏳ ready dalam ${h}j ${m}m`;
+}
 async function hSkills() {
   const c = await client(); const st = await c.playerStats(myPid).catch(() => ({}));
   const xp = st.skillXp || {};
-  return `📊 <b>Skills</b> (avg lvl ${st.avg || '?'})\n` +
+  let spinLine;
+  try {
+    const me = await c.me();
+    spinLine = fmtSpinnerReady(me?.meta?.dailySpinnerLastMs);
+  } catch { spinLine = '🎡 Spinner: status ?'; }
+  const avg = st.avg;
+  const unlock = (Number(avg) || 0) >= 5 ? '✅ unlocked (avg≥5)' : `🔒 butuh avg 5 (now ${avg ?? '?'})`;
+  return `📊 <b>Skills</b> (avg lvl ${avg ?? '?'})\n` +
     `⚔️ combat: ${xp.combat ?? 0}\n🪓 woodcutting: ${xp.woodcutting ?? 0}\n⛏ mining: ${xp.mining ?? 0}\n` +
     `🎣 fishing: ${xp.fishing ?? 0}\n🍳 cooking: ${xp.cooking ?? 0}\n🔨 smithing: ${xp.smithing ?? 0}\n` +
-    `${(st.avg || 0) >= 5 ? '✅ Spinner unlocked (avg≥5)' : '🔒 Spinner butuh avg 5'}`;
+    `${spinLine}\n${unlock}`;
 }
 async function hBalance() {
   const c = await client(); const me = await c.me(); const bp = me.backpack || {};
@@ -294,16 +310,12 @@ async function hSpinner() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
   const c = await client();
-  // Gate: butuh avg skill >= 5
+  // Gate: butuh avg level >= 5 (server-side, dari playerStats.avg)
   try {
-    const me = await c.me();
-    const sk = me?.skills || me?.viewer?.skills || null;
-    if (sk && typeof sk === 'object') {
-      const lvls = Object.values(sk).map((v) => (typeof v === 'number' ? v : (v?.level || 0))).filter((n) => typeof n === 'number');
-      if (lvls.length) {
-        const avg = lvls.reduce((a, b) => a + b, 0) / lvls.length;
-        if (avg < 5) return `🔒 Spinner butuh avg skill ≥ 5 (sekarang ~${avg.toFixed(1)}). Grind dulu bang.`;
-      }
+    const st = await c.playerStats(myPid);
+    const avg = Number(st?.avg);
+    if (Number.isFinite(avg) && avg < 5) {
+      return `🔒 Spinner butuh avg level ≥ 5 (sekarang ${avg}). Grind dulu bang.`;
     }
   } catch {}
   // Free daily spin
