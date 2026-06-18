@@ -659,14 +659,14 @@ function hStop() {
 }
 function hHelp() {
   return `🤖 <b>Kintara Bot — Commands</b>\n` +
-    `/status — bot status & inventory\n/stats — skill levels, XP, avg level\n/skills — same as /stats\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
+    `/status — bot status & inventory\n/skills — skill levels, XP, avg level\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
     `/fish — fishing + cooking\n/gather — woodcutting 🪓\n/mine — mining stone/coal/metal ⛏\n/combat — hunt Wilderness zombies ⚔️\n/auto — automatic orchestrator 🧠\n/stop — stop all bots\n/help — command list\n\n` +
     `<i>1 account = 1 activity (safer against anti-cheat). Combat uses bank-first + auto-survival.</i>`;
 }
 
 const commands = {
   start: () => hHelp(), help: () => hHelp(),
-  status: hStatus, stats: hSkills, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
+  status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
   quest: hQuest, diag: hDiag, fish: hStartFish, stop: hStop,
   spinner: hSpinner, spin: hSpinner,
   gather: hStartGather, chop: hStartGather, mine: () => hStartGather(['rock']),
@@ -683,7 +683,6 @@ const MENU = [
   { command: 'auto', description: '🧠 Auto activity orchestration' },
   { command: 'stop', description: '⏹️ Stop all bots' },
   { command: 'status', description: '📊 Bot status + inventory' },
-  { command: 'stats', description: '📈 Skill levels + XP' },
   { command: 'diag', description: '🩺 Auth, queue, tutorial' },
   { command: 'market', description: '🛒 Marketplace prices' },
   { command: 'version', description: '🧩 Game version watch' },
