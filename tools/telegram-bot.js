@@ -282,9 +282,56 @@ async function hSkills() {
 }
 async function hBalance() {
   const c = await client(); const me = await c.me(); const bp = me.backpack || {};
+  const invItems = (bp.invSlots || [])
+    .filter(Boolean)
+    .map((slot) => `${slot.t}:${slot.n || 0}`);
   let tok = '';
   try { const t = await c.tokenBlimpStats(); tok = `\n🪙 $KINS: $${t.priceUsd} (${t.marketCapLabel})`; } catch {}
-  return `💰 <b>Saldo</b>\ngold: ${bp.gold || 0}\n🎣 fish: ${bp.fish || 0} | 🍳 cooked: ${bp.cooked_fish_meat || 0}\n🪵 wood: ${bp.wood || 0} | 🪨 stone: ${bp.stone || 0} | coal: ${bp.coal || 0} | metal: ${bp.metal || 0}${tok}`;
+  const invLine = invItems.length ? invItems.join(' | ') : '-';
+  return `💰 <b>Saldo</b>\ngold: ${bp.gold || 0}\n🎣 fish: ${bp.fish || 0} | 🍳 cooked: ${bp.cooked_fish_meat || 0}\n🪵 wood: ${bp.wood || 0} | 🪨 stone: ${bp.stone || 0} | coal: ${bp.coal || 0} | metal: ${bp.metal || 0}\n🎒 inv ${(bp.invSlots || []).filter(Boolean).length}/24\n📦 items: ${invLine}${tok}`;
+}
+async function hSpinner() {
+  const authErr = await ensureLoginOk();
+  if (authErr) return authErr;
+  const c = await client();
+  // Gate: butuh avg skill >= 5
+  try {
+    const me = await c.me();
+    const sk = me?.skills || me?.viewer?.skills || null;
+    if (sk && typeof sk === 'object') {
+      const lvls = Object.values(sk).map((v) => (typeof v === 'number' ? v : (v?.level || 0))).filter((n) => typeof n === 'number');
+      if (lvls.length) {
+        const avg = lvls.reduce((a, b) => a + b, 0) / lvls.length;
+        if (avg < 5) return `🔒 Spinner butuh avg skill ≥ 5 (sekarang ~${avg.toFixed(1)}). Grind dulu bang.`;
+      }
+    }
+  } catch {}
+  // Free daily spin
+  let res;
+  try {
+    res = await c.dailySpinnerSpin();
+  } catch (e) {
+    const m = (e.message || '').toLowerCase();
+    if (/cooldown|12h|already|wait|next|timer/.test(m)) {
+      return `⏳ Free spin belum siap (cooldown 12 jam). Coba lagi nanti.`;
+    }
+    return `❌ Spin gagal: ${(e.message || '').slice(0, 120)}`;
+  }
+  if (!res || res.ok === false) {
+    return `❌ Spin ditolak server: ${JSON.stringify(res || {}).slice(0, 120)}`;
+  }
+  const grant = res.grant || {};
+  const bp = res.backpack || {};
+  const prizeIcon = { gold: '🪙', wood: '🪵', stone: '🪨', coal: '⚫', metal: '🔩', fish: '🎣' }[grant.type] || '🎁';
+  let tickerLine = '';
+  try {
+    const t = await c.spinnerPaidTicker();
+    const tk = t?.ticker || {};
+    if (tk.priceUsd) tickerLine = `\n💵 Paid spin: $${tk.paidSpinUsd || 3} (~${tk.tokenSymbol || '$KINS'} @ $${Number(tk.priceUsd).toFixed(6)})`;
+  } catch {}
+  return `🎡 <b>Free Spin!</b>\n${prizeIcon} Menang: <b>${grant.type || '?'}</b> x${grant.amount ?? '?'} (segment #${res.winIndex ?? '?'})\n` +
+    `🎒 Backpack: 🪵 ${bp.wood || 0} | 🪨 ${bp.stone || 0} | ⚫ ${bp.coal || 0} | 🔩 ${bp.metal || 0} | 🪙 ${bp.gold || 0}` +
+    `${tickerLine}\n\n<i>Free spin reset tiap 12 jam.</i>`;
 }
 async function hMarket() {
   const authErr = await ensureLoginOk();
@@ -423,7 +470,7 @@ function hStop() {
 }
 function hHelp() {
   return `🤖 <b>Kintara Bot — Perintah</b>\n` +
-    `/status — status bot & inventory\n/skills — XP & level skill\n/balance — gold/$KINS/resource\n/market — harga marketplace\n/version — versi game saat ini\n/quest — daily quest\n/diag — auth, queue, tutorial, process\n` +
+    `/status — status bot & inventory\n/skills — XP & level skill\n/balance — gold/$KINS/resource\n/market — harga marketplace\n/version — versi game saat ini\n/quest — daily quest\n/spinner — 🎡 free spin wheel (12 jam)\n/diag — auth, queue, tutorial, process\n` +
     `/fish — fishing + cooking\n/gather — chop wood 🪓\n/mine — mining stone/coal/metal ⛏\n/combat — hunt zombie Wilderness ⚔️\n/auto — orchestrator pilih otomatis 🧠\n/stop — STOP semua\n/help — bantuan\n\n` +
     `<i>1 akun = 1 aktivitas (lebih aman anti-cheat). Combat = bank-first + auto-survival.</i>`;
 }
@@ -432,6 +479,7 @@ const commands = {
   start: () => hHelp(), help: () => hHelp(),
   status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
   quest: hQuest, diag: hDiag, fish: hStartFish, stop: hStop,
+  spinner: hSpinner, spin: hSpinner,
   gather: hStartGather, chop: hStartGather, mine: () => hStartGather(['rock']),
   auto: hAuto, combat: hStartCombat,
   sell: () => '💰 Sell aktif setelah tutorial selesai.',
@@ -452,6 +500,7 @@ const MENU = [
   { command: 'skills', description: '📈 Level & XP skill' },
   { command: 'balance', description: '💰 Gold/$KINS/resource' },
   { command: 'quest', description: '📋 Daily quest' },
+  { command: 'spinner', description: '🎡 Free spin wheel (12h)' },
   { command: 'help', description: '❓ Daftar command' },
 ];
 async function syncMenu() {
