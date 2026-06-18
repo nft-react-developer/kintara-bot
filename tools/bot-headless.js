@@ -12,7 +12,7 @@ const { Presence } = require('../lib/presenceWs');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { login, isWalletBannedError } = require('../lib/walletAuth');
 
-const SHARD = process.argv[2] || config.shard || 's2';
+const SHARD = process.argv[2] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
 const log = (...a) => { const s = `[${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}`; console.log(s); fs.appendFileSync(path.join(OUT, 'bot.log'), s + '\n'); };
 const _thr = {};
@@ -23,7 +23,7 @@ const PORTAL = { x: 61 - 30.5, z: 31 - 30.5 }; // mainland east -> pond
 let cli, auth;
 const stats = { fish: 0, casts: 0, ok: 0, cooked: 0, sold: 0, rate: 0, reconnects: 0, started: Date.now() };
 
-async function freshAuth() { auth = await login(); cli = new KintaraClient({ cookie: auth.cookie }); return auth; }
+async function freshAuth() { const r = await KintaraClient.create(); cli = r.client; auth = { cookie: cli.cookie, player: r.player }; return auth; }
 
 async function connectWithRetry() {
   for (let attempt = 1; ; attempt++) {

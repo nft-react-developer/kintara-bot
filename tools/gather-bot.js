@@ -10,11 +10,11 @@ const path = require('path');
 const { config } = require('../config');
 const { Presence } = require('../lib/presenceWs');
 const { KintaraClient } = require('../lib/kintaraClient');
-const { login, isWalletBannedError } = require('../lib/walletAuth');
+const { isWalletBannedError } = require('../lib/walletAuth');
 const gs = require('../lib/gameState');
 
 const KIND = process.argv[2] || 'tree';
-const SHARD = process.argv[3] || config.shard || 's2';
+const SHARD = process.argv[3] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
 const log = (...a) => { const s = `[${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}`; console.log(s); fs.appendFileSync(path.join(OUT, 'gather.log'), s + '\n'); };
 const lt = {}; const logT = (k, m, ms = 30000) => { const n = Date.now(); if (!lt[k] || n - lt[k] > ms) { lt[k] = n; log(m); } };
@@ -125,8 +125,8 @@ async function gatherLoop(p) {
   fs.mkdirSync(OUT, { recursive: true });
   fs.writeFileSync(path.join(OUT, 'gather.log'), '');
   saveState({ phase: 'boot', queueAhead: null, region: 'world' });
-  const a = await login(); cli = new KintaraClient({ cookie: a.cookie });
-  log('GATHER BOT START kind=' + KIND + ' pid=' + a.player?.id);
+  const { client: c, player } = await KintaraClient.create(); cli = c;
+  log('GATHER BOT START kind=' + KIND + ' pid=' + player?.id);
   for (;;) {
     const p = await connectWithRetry();
     p.on('close', () => { stats.reconnects++; saveState({ phase: 'reconnect', queueAhead: null, region: p.region }); log('⚠️ presence closed -> reconnect'); });
