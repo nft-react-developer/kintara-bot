@@ -324,16 +324,31 @@ async function fetchGameVersion() {
 async function smokeCheckPresence(shard, timeoutMs = VERSION_REVIEW_TIMEOUT_MS) {
   const p = new Presence(shard);
   let queueAhead = null;
+  let reachedQueue = false;
   p.on('queue', (d) => {
+    reachedQueue = true;
     const ahead = Number(d?.ahead);
     if (Number.isFinite(ahead)) queueAhead = ahead;
   });
   try {
     await Promise.race([
       p.connect(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`presence timeout${queueAhead != null ? ` (queue ${queueAhead})` : ''}`)), timeoutMs)),
+      new Promise((_, reject) => setTimeout(() => {
+        // Reaching the queue = gate PASSED (auth+membership/level+$KINS all ok).
+        // Real player wait is ~8-15min; we don't sit through it in a smoke check.
+        // Only a timeout BEFORE any queue_pos is a genuine failure.
+        if (reachedQueue) {
+          const e = new Error('queued'); e.queued = true; e.queueAhead = queueAhead;
+          reject(e);
+        } else {
+          reject(new Error(`presence timeout${queueAhead != null ? ` (queue ${queueAhead})` : ''}`));
+        }
+      }, timeoutMs)),
     ]);
-    return { shard, region: p.region, queueAhead };
+    return { shard, region: p.region, queueAhead, queued: false };
+  } catch (e) {
+    if (e && e.queued) return { shard, region: p.region, queueAhead, queued: true };
+    throw e;
   } finally {
     try { p.close(); } catch {}
   }
@@ -368,7 +383,9 @@ async function runAutoVersionReview(sha) {
       lines.push('• basic endpoint OK (/api/marketplace/stats)');
       const presence = await smokeCheckPresence(await resolveShard());
       notes.push('presence');
-      lines.push(`• presence OK (${presence.shard}${presence.queueAhead != null ? `, queue ${presence.queueAhead}` : ''}, region ${presence.region})`);
+      lines.push(presence.queued
+        ? `• presence OK (${presence.shard}, reached queue${presence.queueAhead != null ? ` — ${presence.queueAhead} ahead` : ''}; gate passed)`
+        : `• presence OK (${presence.shard}${presence.queueAhead != null ? `, queue ${presence.queueAhead}` : ''}, region ${presence.region})`);
       markVersionVerified(sha, [...new Set([...notes, 'basic', 'smoke-auto'])]);
       const next = readVersionState();
       saveVersionState({
