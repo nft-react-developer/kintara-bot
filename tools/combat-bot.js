@@ -58,7 +58,7 @@ const POTION_COSTS = {
 const stats = {
   kills: 0, hits: 0, combatStart: null, combatNow: null, combatGain: 0,
   potionsHealth: 0, potionsShield: 0, retreats: 0, deaths: 0, reconnects: 0,
-  hp: 100, region: 'world', started: Date.now(),
+  hp: 100, region: 'world', phase: 'boot', queueAhead: null, started: Date.now(),
 };
 function saveState(extra = {}) {
   try { fs.writeFileSync(STATEFILE, JSON.stringify({ ...stats, ...extra, ageMin: Math.round((Date.now() - stats.started) / 60000) }, null, 2)); } catch {}
@@ -90,6 +90,7 @@ async function refreshPotionCounts() {
       coal: (Number(bp.coal) || 0) + bankCount(bp, 'coal'),
       metal: Number(bp.metal) || 0,
     };
+    saveState();
     return { ...mats, healthLeft, shieldLeft };
   } catch {}
   return { ...mats, healthLeft, shieldLeft };
@@ -112,6 +113,7 @@ async function ensureCombatSupplies() {
       if (r && r.ok !== false && !r.error) {
         await refreshPotionCounts();
         log(`🧪 buy ${type} ok -> health=${healthLeft} shield=${shieldLeft} | wood=${mats.wood} stone=${mats.stone} coal=${mats.coal} gold=${mats.gold}`);
+        saveState();
         continue;
       }
       logT(`buy-${type}`, `🧪 buy ${type} stop: ${r?.error || 'rejected'}`, 5000);
@@ -125,6 +127,7 @@ async function ensureCombatSupplies() {
   if (mats.gold <= MIN_GOLD) {
     log(`💰 reserve guard aktif — gold dijaga minimal ${MIN_GOLD}`);
   }
+  saveState();
   log(`🧪 stok final: health=${healthLeft} shield=${shieldLeft} | wood=${mats.wood} stone=${mats.stone} coal=${mats.coal} gold=${mats.gold}`);
 }
 
@@ -145,6 +148,7 @@ async function tryPotion(p, type) {
       } else if (type === 'potion_shield') {
         stats.potionsShield++; shieldLeft = Math.max(0, shieldLeft - 1); p.shield = 5;
       }
+      saveState();
       log(`🧪 drank ${type} -> hp=${p.hp} (health left=${healthLeft})`);
       return true;
     }
@@ -184,16 +188,21 @@ async function enterWild(p) {
   // kirim manifest blocked-tile (hub butuh utk spawn+path mob). Kosong = cukup utk trigger spawn.
   p.sendWildManifest([]);
   stats.region = p.region;
+  stats.phase = 'wild';
+  stats.queueAhead = null;
   log(`✅ masuk wild region=${p.region} tile=${JSON.stringify(p.wildTile())}`);
   // baseline combat XP (playerStats.skillXp.combat — bukan me())
   try { const st = await cli.playerStats(p.myId); stats.combatStart = st?.skillXp?.combat ?? 0; stats.combatNow = stats.combatStart; log(`baseline combat XP=${stats.combatStart}`); } catch {}
   await refreshPotionCounts();
+  saveState();
   log(`🧪 potions: health=${healthLeft} shield=${shieldLeft}`);
   return true;
 }
 
 async function retreatToSafe(p) {
   stats.retreats++;
+  stats.phase = 'retreat';
+  saveState();
   const sc = wildWorld(SAFE_CAMP.col, SAFE_CAMP.row);
   log(`🏃 retreat ke safe camp (hp=${p.hp})...`);
   await p.walkTo(sc.x, sc.z, { maxSec: 30 });
@@ -208,10 +217,14 @@ async function retreatToSafe(p) {
     log('🚪 potion habis & HP rendah — EXIT ke Mainland (sesi combat selesai aman)');
     p.setRegion('world', NORTH_PORTAL.x, NORTH_PORTAL.z + 1);
     stats.region = 'world';
+    stats.phase = 'exit';
+    saveState();
     await sleep(3000);
     return 'exited';
   }
   log(`🛡️ recovered hp=${p.hp} (health left=${healthLeft}), lanjut hunt`);
+  stats.phase = 'hunt';
+  saveState();
   return 'recovered';
 }
 
@@ -225,6 +238,8 @@ async function huntLoop(p) {
   }
   const aliveCount = p.wildMobs.filter((m) => m.alive).length;
   if (!aliveCount) { log('⚠️ hub belum kirim mob setelah 30s — coba reconnect'); return; }
+  stats.phase = 'hunt';
+  saveState();
   log(`🧟 ${aliveCount} mob hidup terdeteksi. Mulai hunt.`);
 
   while (p.ready && /^wild/.test(p.region)) {
@@ -258,7 +273,7 @@ async function huntLoop(p) {
       const c = Math.max(Math.abs(m.col - p.wildTile().col), Math.abs(m.row - p.wildTile().row));
       if (c > 1) break; // mob kabur, re-target
       const ok = p.sendWildMobHit(target.i, HIT_MULT);
-      if (ok) { stats.hits++; logT('swing', `🗡️ hit mob[${target.i}] lv=${m.lv}`, 8000); }
+      if (ok) { stats.hits++; saveState(); logT('swing', `🗡️ hit mob[${target.i}] lv=${m.lv}`, 8000); }
       await sleep(SWING_COOLDOWN_MS);
       if (await survivalCheck(p) === 'retreat') break;
     }
@@ -276,12 +291,35 @@ async function connectWithRetry() {
     try {
       const p = new Presence(SHARD);
       p.on('log', (m) => log('[ws] ' + m));
-      p.on('queue', (d) => { if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead); });
+      p.on('queue', (d) => {
+        stats.phase = 'queue';
+        stats.queueAhead = Number.isFinite(Number(d?.ahead)) ? Number(d.ahead) : null;
+        saveState();
+        if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead);
+      });
       // kill attribution + XP
-      p.on('wm_kill', (d) => { if (Number(d.zm) === 1 || Number(d.dr) === 1) { stats.kills++; log(`☠️ KILL #${stats.kills} (${d.zm ? 'zombie' : 'dragon'}) mob[${d.i}]`); } });
-      p.on('skill_xp', (xp) => { if (xp && xp.combat != null) { stats.combatNow = xp.combat; if (stats.combatStart != null) stats.combatGain = xp.combat - stats.combatStart; logT('xp', `📈 combat XP=${xp.combat} (+${stats.combatGain})`, 10000); } });
-      p.on('hp', (hp) => { stats.hp = hp; });
+      p.on('wm_kill', (d) => {
+        if (Number(d.zm) === 1 || Number(d.dr) === 1) {
+          stats.kills++;
+          stats.phase = 'hunt';
+          saveState();
+          log(`☠️ KILL #${stats.kills} (${d.zm ? 'zombie' : 'dragon'}) mob[${d.i}]`);
+        }
+      });
+      p.on('skill_xp', (xp) => {
+        if (xp && xp.combat != null) {
+          stats.combatNow = xp.combat;
+          if (stats.combatStart != null) stats.combatGain = xp.combat - stats.combatStart;
+          saveState();
+          logT('xp', `📈 combat XP=${xp.combat} (+${stats.combatGain})`, 10000);
+        }
+      });
+      p.on('hp', (hp) => { stats.hp = hp; saveState(); });
       await p.connect();
+      stats.phase = 'presence';
+      stats.region = p.region;
+      stats.queueAhead = null;
+      saveState();
       log('✅ presence live region=' + p.region);
       return p;
     } catch (e) {
@@ -299,12 +337,16 @@ async function connectWithRetry() {
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
   const a = await login();
   cli = new KintaraClient({ cookie: a.cookie });
+  saveState();
   log('COMBAT BOT START pid=' + a.player?.id + ' shard=' + SHARD);
 
   for (;;) {
     const p = await connectWithRetry();
-    p.on('close', () => { stats.reconnects++; log('⚠️ presence closed -> reconnect'); });
+    p.on('close', () => { stats.reconnects++; stats.phase = 'reconnect'; saveState(); log('⚠️ presence closed -> reconnect'); });
     p.hp = 100; p.shield = 0;
+    stats.phase = 'prep';
+    stats.region = p.region;
+    saveState();
     await sleep(2000);
 
     // === BANK-FIRST (safety) — sebelum masuk wild ===

@@ -255,7 +255,21 @@ async function hStatus() {
   lines.push('📦 <b>Session</b>');
   if (s) lines.push(`🎣 fish ${s.ok || 0}/${s.casts || 0} | 🎒 ${s.fish || 0} | 🍳 ${s.cooked || 0} | 💰 ${s.sold || 0} | ⏱ ${fmtAgeMin(s.ageMin)}`);
   if (g) lines.push(`🪓 felled ${g.felled || 0} | 🪵 ${g.wood || 0} (+${g.gainedWood || 0}) | 🪨 ${g.stone || 0} (+${g.gainedStone || 0}) | ⬛ ${g.coal || 0} (+${g.gainedCoal || 0}) | 🔩 ${g.metal || 0} (+${g.gainedMetal || 0}) | ⏱ ${fmtAgeMin(g.ageMin)}`);
-  if (cs) lines.push(`⚔️ kill ${cs.kills || 0} | 🗡️ ${cs.hits || 0} | 📈 +${cs.combatGain || 0}XP | ❤️ ${cs.hp || 0} | 🧪 ${cs.potionsHealth || 0}H/${cs.potionsShield || 0}S | 🏃 ${cs.retreats || 0} | ⏱ ${fmtAgeMin(cs.ageMin)}`);
+  if (cs) {
+    const phaseMap = {
+      boot: 'boot',
+      prep: 'prep',
+      queue: cs.queueAhead != null ? `queue ${cs.queueAhead}` : 'queue',
+      presence: 'presence',
+      wild: 'wild',
+      hunt: 'hunt',
+      retreat: 'retreat',
+      exit: 'exit',
+      reconnect: 'reconnect',
+    };
+    const phaseLabel = cs.phase ? (phaseMap[cs.phase] || cs.phase) : null;
+    lines.push(`⚔️ kill ${cs.kills || 0} | 🗡️ ${cs.hits || 0} | 📈 +${cs.combatGain || 0}XP | ❤️ ${cs.hp || 0} | 🧪 ${cs.potionsHealth || 0}H/${cs.potionsShield || 0}S | 🏃 ${cs.retreats || 0}${phaseLabel ? ` | 📍 ${phaseLabel}` : ''} | ⏱ ${fmtAgeMin(cs.ageMin)}`);
+  }
   return lines.join('\n');
 }
 async function hSkills() {
