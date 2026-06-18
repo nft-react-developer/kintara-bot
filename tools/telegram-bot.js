@@ -660,14 +660,14 @@ function hStop() {
 function hHelp() {
   return `🤖 <b>Kintara Bot — Commands</b>\n` +
     `/status — bot status & inventory\n/skills — skill levels, XP, avg level\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
-    `/fish — fishing + cooking\n/gather — woodcutting 🪓\n/mine — mining stone/coal/metal ⛏\n/combat — hunt Wilderness zombies ⚔️\n/auto — automatic orchestrator 🧠\n/stop — stop all bots\n/help — command list\n\n` +
+    `/fishing — fishing + cooking\n/gather — woodcutting 🪓\n/mine — mining stone/coal/metal ⛏\n/combat — hunt Wilderness zombies ⚔️\n/auto — automatic orchestrator (smart activity switching) 🧠\n/stop — stop all bots\n/help — command list\n\n` +
     `<i>1 account = 1 activity (safer against anti-cheat). Combat uses bank-first + auto-survival.</i>`;
 }
 
 const commands = {
   start: () => hHelp(), help: () => hHelp(),
   status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
-  quest: hQuest, diag: hDiag, fish: hStartFish, stop: hStop,
+  quest: hQuest, diag: hDiag, fishing: hStartFish, fish: hStartFish, stop: hStop,
   spinner: hSpinner, spin: hSpinner,
   gather: hStartGather, chop: hStartGather, mine: () => hStartGather(['rock']),
   auto: hAuto, combat: hStartCombat,
@@ -676,7 +676,7 @@ const commands = {
 
 // Set menu command Telegram = HANYA yg dipakai sekarang (hapus sisa lama)
 const MENU = [
-  { command: 'fish', description: '🎣 Fishing + cooking' },
+  { command: 'fishing', description: '🎣 Fishing + cooking' },
   { command: 'gather', description: '🪓 Chop wood' },
   { command: 'mine', description: '⛏ Mining stone/coal/metal' },
   { command: 'combat', description: '⚔️ Hunt zombie Wilderness' },

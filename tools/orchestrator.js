@@ -103,9 +103,9 @@ async function decide() {
   const gatherSkillLow = (xp.woodcutting || 0) < 5000 || (xp.mining || 0) < 5000; // level skill gather masih kecil
   // keputusan
   let goal, why;
-  if (needFishQuest) { goal = 'fish'; why = 'daily-quest fish belum kelar'; }
-  else if (gatherSkillLow && (woodLow || stoneLow)) { goal = 'gather'; why = 'skill woodcutting/mining + material masih rendah'; }
-  else { goal = 'fish'; why = 'default: fishing XP/value tinggi'; }
+  if (needFishQuest) { goal = 'fish'; why = 'unfinished daily fishing quest'; }
+  else if (gatherSkillLow && (woodLow || stoneLow)) { goal = 'gather'; why = 'woodcutting/mining progression and materials are still low'; }
+  else { goal = 'fish'; why = 'default: fishing currently has the best XP/value profile'; }
   return { goal, why, snapshot: { wood: bp.wood, stone: bp.stone, coal: bp.coal, fish: bp.fish, woodcutting: xp.woodcutting, mining: xp.mining, fishing: xp.fishing, avg: st.avg } };
 }
 
@@ -115,7 +115,7 @@ async function decide() {
   fs.writeFileSync(OPID, JSON.stringify({ pid: process.pid, started: Date.now() }));
   process.on('exit', () => { try { fs.unlinkSync(OPID); } catch {} });
   fs.writeFileSync(path.join(OUT, 'orchestrator.log'), '');
-  await tg.send('🧠 <b>Orchestrator ON</b> — auto-pilih aktivitas by goal. /stop utk matikan.').catch(() => {});
+  await tg.send('🧠 <b>Orchestrator ON</b> — smart activity switching is active. Use /stop to turn it off.').catch(() => {});
   log('orchestrator start');
   for (;;) {
     try {
@@ -127,13 +127,13 @@ async function decide() {
       if (d.goal !== current && (current === null || elapsed > MIN_RUN_MS)) {
         ensureOnly(d.goal); current = d.goal; currentSince = Date.now();
         switched = true;
-        await tg.send(`🧠 Switch -> <b>${d.goal === 'fish' ? '🎣 Fishing' : '🪓 Gather'}</b>\n${d.why}`).catch(() => {});
+        await tg.send(`🧠 Switch -> <b>${d.goal === 'fish' ? '🎣 Fishing' : '🪓 Gather'}</b>\nReason: ${d.why}`).catch(() => {});
       } else {
         ensureOnly(current || d.goal);
         if (!current) { current = d.goal; currentSince = Date.now(); }
         if (d.goal !== current) {
           const remainingMs = Math.max(0, MIN_RUN_MS - elapsed);
-          holdReason = `tahan switch ${Math.ceil(remainingMs / 60000)}m lagi`;
+          holdReason = `hold current activity for ${Math.ceil(remainingMs / 60000)}m more`;
         }
       }
       saveState({
