@@ -21,7 +21,7 @@ const { KintaraClient } = require('../lib/kintaraClient');
 const { isWalletBannedError } = require('../lib/walletAuth');
 const bank = require('../lib/bank');
 
-const SHARD = process.argv[2] || config.shard || 's2';
+const SHARD = process.argv[2] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
 const PIDFILE = path.join(OUT, 'control', 'combatbot.pid');
 const STATEFILE = path.join(OUT, 'combat-state.json');

@@ -50,8 +50,22 @@ async function ensureLoginOk() {
 }
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
 
-// Pilih shard dengan queue paling sedikit (auto). Return string 's<N>' atau null.
+// Pilih shard yang BISA dimasuki wallet ini (gate=ok) dgn queue paling kecil.
+// Build 1ce1fc76 nambah entry-gate /api/auth/gate-check (membership/level/$KINS),
+// jadi daftar restricted gak lagi hardcoded — kita probe live tiap shard biar
+// otomatis ngikut perubahan peta server. RESTRICTED lama dipakai cuma fallback
+// kalau gate-check gak kejangkau.
 let _bestShardCache = { ts: 0, shard: null };
+async function shardGateOk(c, id) {
+  try {
+    const r = await c.get(`/api/auth/gate-check?shard=${Number(id) | 0}`);
+    return r && r.gate === 'ok';
+  } catch (e) {
+    // 403 = gate nolak (membership/level/kins). Selain itu (network) -> unknown.
+    if (e && e.status === 403) return false;
+    return null; // unknown -> jangan langsung exclude, biar fallback yg putusin
+  }
+}
 async function pickBestShard(force = false) {
   if (!force && Date.now() - _bestShardCache.ts < 60000 && _bestShardCache.shard) return _bestShardCache.shard;
   try {
@@ -59,15 +73,27 @@ async function pickBestShard(force = false) {
     const r = await c.servers();
     const list = (r.servers || []).filter((x) => x && x.id != null);
     if (!list.length) return null;
-    // s1 ("Kintara Club") menolak koneksi bot (403) — skip server restricted ini.
-    // s1-s3 level-gated (butuh lvl 20+), bot ditolak walau queue 0. Skip sampai punya akses.
-    // Bisa di-override lewat env KINTARA_ALLOW_LOW_SERVERS=1 (mis. setelah premium / lvl 20).
-    const RESTRICTED = process.env.KINTARA_ALLOW_LOW_SERVERS === '1' ? new Set() : new Set([1, 2, 3]);
-    let pool = list.filter((x) => !RESTRICTED.has(Number(x.id)));
-    if (!pool.length) pool = list;
-    // prioritas: queue terkecil, lalu yang tidak full
-    pool.sort((a, b) => (Number(a.queueLength || 0) - Number(b.queueLength || 0)) || (a.full === b.full ? 0 : a.full ? 1 : -1));
-    const best = pool[0];
+    // urutkan dulu by queue terkecil lalu non-full -> probe gate dari yg paling menarik.
+    const ranked = [...list].sort((a, b) => (Number(a.queueLength || 0) - Number(b.queueLength || 0)) || (a.full === b.full ? 0 : a.full ? 1 : -1));
+    // override manual: lewati gate-check (mis. udah premium / lvl 20)
+    if (process.env.KINTARA_ALLOW_LOW_SERVERS === '1') {
+      const shard0 = 's' + ranked[0].id;
+      _bestShardCache = { ts: Date.now(), shard: shard0 };
+      return shard0;
+    }
+    // probe gate-check live, ambil shard pertama (queue terkecil) yg gate=ok
+    for (const sv of ranked) {
+      const ok = await shardGateOk(c, sv.id);
+      if (ok === true) {
+        const shard = 's' + sv.id;
+        _bestShardCache = { ts: Date.now(), shard };
+        return shard;
+      }
+    }
+    // semua gate nolak / gak kejangkau -> fallback ke heuristik lama (skip s1-s3)
+    const RESTRICTED = new Set([1, 2, 3]);
+    const pool = ranked.filter((x) => !RESTRICTED.has(Number(x.id)));
+    const best = (pool.length ? pool : ranked)[0];
     const shard = 's' + best.id;
     _bestShardCache = { ts: Date.now(), shard };
     return shard;
@@ -75,7 +101,7 @@ async function pickBestShard(force = false) {
 }
 async function resolveShard() {
   const best = await pickBestShard();
-  return best || config.shard || 's2';
+  return best || config.shard || 's4';
 }
 
 function pidOf(f) {
@@ -337,7 +363,7 @@ async function runAutoVersionReview(sha) {
       const market = await c.marketplaceStats('fish');
       if (market?.ok === false) throw new Error('marketplace stats rejected');
       lines.push('• basic endpoint OK (/api/marketplace/stats)');
-      const presence = await smokeCheckPresence(config.shard || 's2');
+      const presence = await smokeCheckPresence(await resolveShard());
       notes.push('presence');
       lines.push(`• presence OK (${presence.shard}${presence.queueAhead != null ? `, queue ${presence.queueAhead}` : ''}, region ${presence.region})`);
       markVersionVerified(sha, [...new Set([...notes, 'basic', 'smoke-auto'])]);
@@ -760,7 +786,7 @@ async function hDiag() {
   const lines = [
     '🩺 <b>Diag</b>',
     `👤 ${player.display_name || player.username || '?'} • id ${player.id || '?'}`,
-    `🧭 shard ${config.shard || 's2'} • tutorial ${tutorialStep} • avg ${viewer?.avgLevel ?? '?'}`,
+    `🧭 shard ${(await resolveShard().catch(() => null)) || config.shard || 's4'} • tutorial ${tutorialStep} • avg ${viewer?.avgLevel ?? '?'}`,
     `🎒 inv ${(me?.backpack?.invSlots || []).filter(Boolean).length}/24 • gold ${me?.backpack?.gold || 0}`,
     '',
     '🤖 <b>Process</b>',

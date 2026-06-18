@@ -78,16 +78,38 @@ function saveState(data) {
   fs.writeFileSync(STATEFILE, JSON.stringify({ ...data, ts: Date.now() }, null, 2));
 }
 
-function ensureOnly(activity) {
+// Pilih shard yg BISA dimasuki wallet (gate=ok) dgn queue terkecil. Build baru
+// nambah /api/auth/gate-check (membership/level/$KINS); jangan hardcode shard.
+let _shardCache = { ts: 0, shard: null };
+async function pickShard() {
+  if (Date.now() - _shardCache.ts < 120000 && _shardCache.shard) return _shardCache.shard;
+  try {
+    const c = await client();
+    const r = await c.servers();
+    const ranked = (r.servers || []).filter((x) => x && x.id != null)
+      .sort((a, b) => (Number(a.queueLength || 0) - Number(b.queueLength || 0)) || (a.full === b.full ? 0 : a.full ? 1 : -1));
+    if (process.env.KINTARA_ALLOW_LOW_SERVERS !== '1') {
+      for (const sv of ranked) {
+        let ok = null;
+        try { const g = await c.get(`/api/auth/gate-check?shard=${Number(sv.id) | 0}`); ok = g && g.gate === 'ok'; }
+        catch (e) { ok = e && e.status === 403 ? false : null; }
+        if (ok === true) { _shardCache = { ts: Date.now(), shard: 's' + sv.id }; return _shardCache.shard; }
+      }
+    } else if (ranked[0]) { _shardCache = { ts: Date.now(), shard: 's' + ranked[0].id }; return _shardCache.shard; }
+  } catch {}
+  return config.shard || 's4';
+}
+
+async function ensureOnly(activity) {
   // pastikan cuma `activity` yg jalan
   const fp = pidOf(FPID), gp = pidOf(GPID), combatPid = pidOf(CPID);
   if (combatPid) { try { process.kill(combatPid, 'SIGKILL'); fs.unlinkSync(CPID); } catch {} }
   if (activity === 'fish') {
     if (gp) { try { process.kill(gp, 'SIGKILL'); fs.unlinkSync(GPID); } catch {} }
-    if (!pidOf(FPID)) { const pid = spawnDetached('bot-headless.js', [config.shard || 's2'], FPID); log('▶️ START fishing (pid ' + pid + ')'); }
+    if (!pidOf(FPID)) { const shard = await pickShard(); const pid = spawnDetached('bot-headless.js', [shard], FPID); log('▶️ START fishing (pid ' + pid + ') shard=' + shard); }
   } else if (activity === 'gather') {
     if (fp) { try { process.kill(fp, 'SIGKILL'); fs.unlinkSync(FPID); } catch {} }
-    if (!pidOf(GPID)) { const pid = spawnDetached('gather-bot.js', ['all', config.shard || 's2'], GPID); log('▶️ START gather-all (pid ' + pid + ')'); }
+    if (!pidOf(GPID)) { const shard = await pickShard(); const pid = spawnDetached('gather-bot.js', ['all', shard], GPID); log('▶️ START gather-all (pid ' + pid + ') shard=' + shard); }
   }
 }
 
@@ -125,11 +147,11 @@ async function decide() {
       let switched = false;
       let holdReason = null;
       if (d.goal !== current && (current === null || elapsed > MIN_RUN_MS)) {
-        ensureOnly(d.goal); current = d.goal; currentSince = Date.now();
+        await ensureOnly(d.goal); current = d.goal; currentSince = Date.now();
         switched = true;
         await tg.send(`🧠 Switch -> <b>${d.goal === 'fish' ? '🎣 Fishing' : '🪓 Gather'}</b>\nReason: ${d.why}`).catch(() => {});
       } else {
-        ensureOnly(current || d.goal);
+        await ensureOnly(current || d.goal);
         if (!current) { current = d.goal; currentSince = Date.now(); }
         if (d.goal !== current) {
           const remainingMs = Math.max(0, MIN_RUN_MS - elapsed);
