@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// ============ BOT HEADLESS — orchestrator persisten (Path A) ============
-// Antri SEKALI lalu tinggal di dunia. Tahan 502/disconnect (auto-reconnect
-// queue->presence). Loop: ke The Pond -> grant-fish-xp{} -> daily-quest fish.
-// Log status ke recon/bot.log + recon/bot-state.json. Berhenti: kill / Ctrl-C.
+// ============ HEADLESS BOT — persistent orchestrator worker (Path A) ============
+// Queue once, then remain in the world. Tolerates 502/disconnects with auto-reconnect
+// queue->presence). Loop: go to The Pond -> grant-fish-xp{} -> daily-quest fish.
+// Log status to recon/bot.log + recon/bot-state.json. Stop with kill / Ctrl-C.
 //
-// Pakai: node tools/bot-headless.js [shard=s2]
+// Usage: node tools/bot-headless.js [shard=s2]
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
@@ -39,7 +39,7 @@ async function createClientWithRetry() {
       stats.phase = 'bootstrap_retry';
       stats.queueAhead = null;
       saveState();
-      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      log(`bootstrap attempt ${attempt} failed: ${String(e.message || e).slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
       await sleep(waitMs);
     }
   }
@@ -78,7 +78,7 @@ async function connectWithRetry() {
         throw new Error('transient_presence_failover');
       }
       const waitMs = retryDelayMs(attempt);
-      log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      log(`connect attempt ${attempt} failed: ${e.message.slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
       stats.phase = 'reconnect_wait';
       stats.queueAhead = null;
       saveState();
@@ -98,10 +98,10 @@ async function gotoPond(p) {
   await sleep(1500);
   if (p.region !== 'pond') { p.setRegion('pond', PORTAL.x, PORTAL.z); await sleep(3000); }
   if (p.region === 'pond') {
-    // spawn di dock barat pond (col~1). Jalan ke timur ke tepi air (col~8 -> x=-11.5).
-    p.pos.x = -18.5; p.pos.z = 0; // titik masuk pond (west) approx
+    // spawn at the pond west dock (col~1). Walk east to the water edge (col~8 -> x=-11.5).
+    p.pos.x = -18.5; p.pos.z = 0; // approximate pond entry point (west)
     await p.walkTo(-11.5, 0, { maxSec: 12 });
-    log('di pond, tile=' + JSON.stringify(p.pondTile()));
+    log('at pond, tile=' + JSON.stringify(p.pondTile()));
   }
   stats.phase = p.region === 'pond' ? 'pond' : 'travel_pond';
   stats.queueAhead = null;
@@ -111,12 +111,12 @@ async function gotoPond(p) {
   return p.region === 'pond';
 }
 
-// ----- konfigurasi manajemen ikan -----
+// ----- fish management configuration -----
 const FISH_SPOT = { x: -11.5, z: 0 };       // tepi air pond (col8,row20)
 const ROAST = { x: -14.5, z: -12.5 };       // dekat Roast Pit pond (col5-6,row6-7)
-const COOK_AT = 40, COOK_BATCH = 8;         // kalau fish>=40, masak 8 (XP cooking)
-const FISH_RESERVE = 50, SELL_FISH_AT = 160; // jual ikan kalau >160, sisakan 50 utk upgrade/masak
-const COOKED_RESERVE = 40, SELL_COOKED_AT = 90; // simpan 40 cooked utk healing/upgrade
+const COOK_AT = 40, COOK_BATCH = 8;         // when fish>=40, cook 8 for cooking XP
+const FISH_RESERVE = 50, SELL_FISH_AT = 160; // sell fish when >160, keep 50 for upgrades/cooking
+const COOKED_RESERVE = 40, SELL_COOKED_AT = 90; // keep 40 cooked for healing/upgrades
 let fishPrice = 1;
 
 function saveState(extra = {}) {
@@ -152,7 +152,7 @@ async function catchOne(p) {
 }
 
 async function cookBatch(p, n) {
-  log(`🍳 ke Roast Pit, masak ${n}...`);
+  log(`🍳 walking to Roast Pit, cooking ${n}...`);
   await p.walkTo(ROAST.x, ROAST.z, { maxSec: 14 });
   await sleep(1500);
   let cooked = 0;
@@ -161,7 +161,7 @@ async function cookBatch(p, n) {
     catch (e) { if (!/rate_limited/.test(e.message)) { logThrottle('cook', 'cook err: ' + e.message.slice(0, 40)); break; } }
     await sleep(4500);
   }
-  log(`🍳 masak ${cooked}/${n} (cooked total=${stats.cooked})`);
+  log(`🍳 cooked ${cooked}/${n} (cooked total=${stats.cooked})`);
   await p.walkTo(FISH_SPOT.x, FISH_SPOT.z, { maxSec: 14 });
   await sleep(1000);
 }
@@ -216,7 +216,7 @@ async function fishLoop(p) {
   stats.fish = me0?.backpack?.fish || 0;
   saveState();
 
-  for (;;) { // supervisor: reconnect selamanya
+  for (;;) { // supervisor: reconnect forever
     const p = await connectWithRetry();
     let closed = false;
     p.on('close', () => {
@@ -231,7 +231,7 @@ async function fishLoop(p) {
     });
     await sleep(2000);
     await gotoPond(p);
-    await fishLoop(p); // keluar saat p.ready=false (disconnect)
+    await fishLoop(p); // exits when p.ready=false (disconnect)
     try { p.close(); } catch {}
     await sleep(3000);
   }

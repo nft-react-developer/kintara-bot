@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 // ============ COMBAT BOT — Wilderness hunting (Path A, headless) ============
-// Server-authoritative mobs: hub broadcast posisi+HP di snap.npcs.wildMobs.
-// Flow: login -> BANK semua loot (safety) -> queue+presence -> enter wild
-// (north portal) -> hunt zombie terdekat (walk adjacent -> wm_ev hit s/d mati).
-// Combat XP di-grant server (skill_xp push), daily zombie quest via wm_ev by=me.
+// Server-authoritative mobs: hub broadcasts position+HP in snap.npcs.wildMobs.
+// Flow: login -> BANK all loot (safety) -> queue+presence -> enter wild
+// (north portal) -> hunt nearest zombie (walk adjacent -> wm_ev hit until dead).
+// Combat XP is granted by the server (skill_xp push); daily zombie quest progresses via wm_ev by=me.
 //
 // SURVIVAL KETAT:
-//  - BANK-FIRST wajib (nol carried loss kalau mati).
+//  - BANK-FIRST is mandatory (zero carried-loss risk if death happens).
 //  - Monitor HP (wild_mb_ack/pvit/snap). HP<=POTION_HP -> consumePotion health.
-//    HP<=SHIELD_HP -> + potion_shield. HP<=RETREAT_HP / potion habis -> RETREAT
-//    ke safe camp + exit Mainland. Bot TIDAK PERNAH kirim wmb (kontak) -> mob
-//    gak bisa damage kita; risiko nyata cuma PvP. Tetap retreat sebagai jaring.
+//    HP<=SHIELD_HP -> + potion_shield. HP<=RETREAT_HP / no potions left -> RETREAT
+//    to safe camp + exit Mainland. Bot NEVER sends wmb contact reports -> mob
+//    cannot damage us; the real risk is PvP. Retreat remains a safety net.
 //
-// Pakai: node tools/combat-bot.js [shard=s2]
+// Usage: node tools/combat-bot.js [shard=s2]
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
@@ -82,12 +82,12 @@ async function createClientWithRetry() {
       stats.phase = 'bootstrap_retry';
       stats.queueAhead = null;
       saveState();
-      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      log(`bootstrap attempt ${attempt} failed: ${String(e.message || e).slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
       await sleep(waitMs);
     }
   }
 }
-let healthLeft = 0, shieldLeft = 0;   // diisi dari backpack saat start (server authoritative)
+let healthLeft = 0, shieldLeft = 0;   // filled from the backpack at startup (server authoritative)
 let lastPotionAt = 0;
 let mats = { gold: 0, wood: 0, stone: 0, coal: 0, metal: 0 };
 const bankCount = (bp, type) => {
@@ -97,7 +97,7 @@ const bankCount = (bp, type) => {
 };
 
 // Health potion = HoT +20/tick x5 = +100 total, DIDORONG CLIENT (consume-potion cuma
-// kurangi potion; heal sebenarnya client-side + save-hp). Headless: kita yg apply + persist.
+// reduces potion count; real healing is client-side + save-hp). Headless applies and persists it.
 const HEALTH_POTION_TOTAL = 100;
 
 async function refreshPotionCounts() {
@@ -121,7 +121,7 @@ async function refreshPotionCounts() {
 
 async function ensureCombatSupplies() {
   await refreshPotionCounts();
-  log(`🧪 stok awal: health=${healthLeft}/${TARGET_HEALTH_POTIONS} shield=${shieldLeft}/${TARGET_SHIELD_POTIONS} | wood=${mats.wood} stone=${mats.stone} coal=${mats.coal} gold=${mats.gold}`);
+  log(`🧪 initial stock: health=${healthLeft}/${TARGET_HEALTH_POTIONS} shield=${shieldLeft}/${TARGET_SHIELD_POTIONS} | wood=${mats.wood} stone=${mats.stone} coal=${mats.coal} gold=${mats.gold}`);
 
   const canAfford = (type) => {
     const cost = POTION_COSTS[type] || {};
@@ -148,10 +148,10 @@ async function ensureCombatSupplies() {
   await buyUntilTarget('potion_shield', TARGET_SHIELD_POTIONS);
 
   if (mats.gold <= MIN_GOLD) {
-    log(`💰 reserve guard aktif — gold dijaga minimal ${MIN_GOLD}`);
+    log(`💰 reserve guard active — keeping at least ${MIN_GOLD}`);
   }
   saveState();
-  log(`🧪 stok final: health=${healthLeft} shield=${shieldLeft} | wood=${mats.wood} stone=${mats.stone} coal=${mats.coal} gold=${mats.gold}`);
+  log(`🧪 final stock: health=${healthLeft} shield=${shieldLeft} | wood=${mats.wood} stone=${mats.stone} coal=${mats.coal} gold=${mats.gold}`);
 }
 
 async function tryPotion(p, type) {
@@ -165,7 +165,7 @@ async function tryPotion(p, type) {
     if (r && r.ok !== false && !r.error) {
       if (type === 'potion_health') {
         stats.potionsHealth++; healthLeft = Math.max(0, healthLeft - 1);
-        // drive HoT + persist: server percaya save-hp saat combat (combatHealRealtime)
+        // drive HoT + persist: server trusts save-hp during combat (combatHealRealtime)
         p.hp = Math.min(100, (p.hp | 0) + HEALTH_POTION_TOTAL);
         try { await cli.saveHp(p.hp); } catch {}
       } else if (type === 'potion_shield') {
@@ -180,7 +180,7 @@ async function tryPotion(p, type) {
   return false;
 }
 
-// HP-driven survival reaction. Returns 'retreat' if must bail, 'dead' kalau mati.
+// HP-driven survival reaction. Returns 'retreat' if the bot must bail, 'dead' if death happens.
 async function survivalCheck(p) {
   const hp = p.hp | 0;
   stats.hp = hp;
@@ -191,35 +191,35 @@ async function survivalCheck(p) {
     log('💀 HP 0 — died (loot already banked = safe)');
     return 'dead';
   }
-  // kritis: bail ke safe camp
+  // critical: bail to safe camp
   if (hp <= RETREAT_HP) {
-    if (healthLeft <= 0 && shieldLeft <= 0) { log(`🩸 HP ${hp} kritis & potion habis — RETREAT+EXIT`); return 'retreat'; }
-    log(`🩸 HP ${hp} <= ${RETREAT_HP} — RETREAT (heal di safe camp)`); return 'retreat';
+    if (healthLeft <= 0 && shieldLeft <= 0) { log(`🩸 HP ${hp} critical and out of potions — RETREAT+EXIT`); return 'retreat'; }
+    log(`🩸 HP ${hp} <= ${RETREAT_HP} — RETREAT (heal at safe camp)`); return 'retreat';
   }
-  // low: pop shield dulu kalau ada, lalu heal
+  // low: pop shield first when available, then heal
   if (hp <= SHIELD_HP && shieldLeft > 0 && (p.shield | 0) <= 0) await tryPotion(p, 'potion_shield');
   if (hp <= POTION_HP && healthLeft > 0) await tryPotion(p, 'potion_health');
   return 'ok';
 }
 
 async function enterWild(p) {
-  log('walk ke north portal Mainland...');
+  log('walking to Mainland north portal...');
   p.equip('wild_sword');
   await p.walkTo(NORTH_PORTAL.x, NORTH_PORTAL.z, { until: () => /^wild/.test(p.region), maxSec: 40 });
   await sleep(1500);
   if (!/^wild/.test(p.region)) {
-    log('paksa setRegion wild (handoff di tile portal)');
+    log('forcing setRegion wild (portal tile handoff)');
     const sp = wildWorld(25, 48); // WILD_SPAWN
     p.setRegion('wild', sp.x, sp.z);
     await sleep(3000);
   }
   if (!/^wild/.test(p.region)) return false;
-  // kirim manifest blocked-tile (hub butuh utk spawn+path mob). Kosong = cukup utk trigger spawn.
+  // send blocked-tile manifest, which the hub needs for mob spawn/pathing. Empty is enough to trigger spawn.
   p.sendWildManifest([]);
   stats.region = p.region;
   stats.phase = 'wild';
   stats.queueAhead = null;
-  log(`✅ masuk wild region=${p.region} tile=${JSON.stringify(p.wildTile())}`);
+  log(`✅ entered wild region=${p.region} tile=${JSON.stringify(p.wildTile())}`);
   // baseline combat XP (playerStats.skillXp.combat — bukan me())
   try { const st = await cli.playerStats(p.myId); stats.combatStart = st?.skillXp?.combat ?? 0; stats.combatNow = stats.combatStart; log(`baseline combat XP=${stats.combatStart}`); } catch {}
   await refreshPotionCounts();
@@ -233,17 +233,17 @@ async function retreatToSafe(p) {
   stats.phase = 'retreat';
   saveState();
   const sc = wildWorld(SAFE_CAMP.col, SAFE_CAMP.row);
-  log(`🏃 retreat ke safe camp (hp=${p.hp})...`);
+  log(`🏃 retreating to safe camp (hp=${p.hp})...`);
   await p.walkTo(sc.x, sc.z, { maxSec: 30 });
   await sleep(1500);
-  // heal pakai health potion sampai HP aman (>=80) atau potion habis.
-  // tryPotion sekarang drive heal +100 + save-hp, jadi 1 potion biasanya cukup.
+  // heal with health potions until HP is safe (>=80) or potions run out.
+  // tryPotion now drives +100 healing + save-hp, so 1 potion is usually enough.
   for (let i = 0; i < 8 && p.hp < 80 && healthLeft > 0; i++) {
     await tryPotion(p, 'potion_health');
-    await sleep(2600); // hormati rate-limit potion
+    await sleep(2600); // respect potion rate limit
   }
   if (healthLeft <= 0 && p.hp <= RETREAT_HP) {
-    log('🚪 potion habis & HP rendah — EXIT ke Mainland (sesi combat selesai aman)');
+    log('🚪 out of potions and low HP — EXIT to Mainland (combat session safely finished)');
     p.setRegion('world', NORTH_PORTAL.x, NORTH_PORTAL.z + 1);
     stats.region = 'world';
     stats.phase = 'exit';
@@ -251,25 +251,25 @@ async function retreatToSafe(p) {
     await sleep(3000);
     return 'exited';
   }
-  log(`🛡️ recovered hp=${p.hp} (health left=${healthLeft}), lanjut hunt`);
+  log(`🛡️ recovered hp=${p.hp} (health left=${healthLeft}), continuing hunt`);
   stats.phase = 'hunt';
   saveState();
   return 'recovered';
 }
 
 async function huntLoop(p) {
-  // tunggu hub spawn mob (wildMobs di snap)
-  log('nunggu wildMobs dari hub...');
+  // wait for the hub to spawn mobs (wildMobs in snap)
+  log('waiting for wildMobs from hub...');
   for (let w = 0; w < 15 && !p.wildMobs.some((m) => m.alive); w++) {
     await sleep(2000);
-    if (w % 3 === 0) logT('waitmob', `  nunggu mob... ${w * 2}s (mobs=${p.wildMobs.length})`);
+    if (w % 3 === 0) logT('waitmob', `  waiting for mobs... ${w * 2}s (mobs=${p.wildMobs.length})`);
     if (w === 5) { p.sendWildManifest([]); } // re-send manifest
   }
   const aliveCount = p.wildMobs.filter((m) => m.alive).length;
-  if (!aliveCount) { log('⚠️ hub belum kirim mob setelah 30s — coba reconnect'); return; }
+  if (!aliveCount) { log('⚠️ hub did not send mobs after 30s — trying reconnect'); return; }
   stats.phase = 'hunt';
   saveState();
-  log(`🧟 ${aliveCount} mob hidup terdeteksi. Mulai hunt.`);
+  log(`🧟 ${aliveCount} live mobs detected. Starting hunt.`);
 
   while (p.ready && /^wild/.test(p.region)) {
     const sv = await survivalCheck(p);
@@ -277,36 +277,36 @@ async function huntLoop(p) {
     if (sv === 'retreat') { const r = await retreatToSafe(p); if (r === 'exited') return 'exited'; continue; }
 
     const target = p.nearestMob();
-    if (!target) { logT('nomob', 'gak ada mob hidup, nunggu respawn...'); await sleep(3000); continue; }
+    if (!target) { logT('nomob', 'no live mobs, waiting for respawn...'); await sleep(3000); continue; }
 
-    // walk ke adjacent (cheb<=1). Target tile -> berdiri 1 tile di selatannya (row-1 menuju spawn).
+    // walk adjacent (cheb<=1). Target tile -> stand 1 tile south of it (row-1 toward spawn).
     if (target.cheb > 1) {
-      const dest = wildWorld(target.col, target.row + 1); // approach dari selatan (arah safe)
+      const dest = wildWorld(target.col, target.row + 1); // approach from the south (safe direction)
       await p.walkTo(dest.x, dest.z, { maxSec: 18, until: () => p.hp <= RETREAT_HP });
       await sleep(400);
       if (p.hp <= RETREAT_HP) continue;
     }
 
-    // re-resolve mob index (snap bisa update)
+    // re-resolve mob index because snap can update
     const tt = p.wildMobs[target.i];
     if (!tt || !tt.alive) { await sleep(300); continue; }
     const cheb = Math.max(Math.abs(tt.col - p.wildTile().col), Math.abs(tt.row - p.wildTile().row));
-    if (cheb > 1) { logT('chase', `mob bergerak (cheb=${cheb}), kejar...`); continue; }
+    if (cheb > 1) { logT('chase', `mob moved (cheb=${cheb}), chasing...`); continue; }
 
-    // HIT: swing loop sampai mob mati (lv=0) atau lepas
+    // HIT: swing loop until the mob dies (lv=0) or moves away
     p.equip('wild_sword');
     const startKills = stats.kills;
     for (let swing = 0; swing < ZOMBIE_LIVES + 3; swing++) {
       const m = p.wildMobs[target.i];
       if (!m || !m.alive) break;
       const c = Math.max(Math.abs(m.col - p.wildTile().col), Math.abs(m.row - p.wildTile().row));
-      if (c > 1) break; // mob kabur, re-target
+      if (c > 1) break; // mob moved away, re-target
       const ok = p.sendWildMobHit(target.i, HIT_MULT);
       if (ok) { stats.hits++; saveState(); logT('swing', `🗡️ hit mob[${target.i}] lv=${m.lv}`, 8000); }
       await sleep(SWING_COOLDOWN_MS);
       if (await survivalCheck(p) === 'retreat') break;
     }
-    // cek apakah mati (lv jadi 0 / alive false setelah snap)
+    // check whether it died (lv becomes 0 / alive false after snap)
     await sleep(600);
     const after = p.wildMobs[target.i];
     if (after && !after.alive && stats.kills === startKills) { /* kill di-handle event wm_kill */ }
@@ -368,7 +368,7 @@ async function connectWithRetry() {
       stats.phase = 'reconnect_wait';
       stats.queueAhead = null;
       saveState();
-      log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      log(`connect attempt ${attempt} failed: ${e.message.slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
       await sleep(waitMs);
     }
   }
@@ -402,24 +402,24 @@ async function connectWithRetry() {
     saveState();
     await sleep(2000);
 
-    // === BANK-FIRST (safety) — sebelum masuk wild ===
+    // === BANK-FIRST (safety) — before entering wild ===
     try {
-      log('🏦 bank dulu (safety)...');
+      log('🏦 banking first (safety)...');
       await p.walkTo(bank.BANK_WORLD.x, bank.BANK_WORLD.z, { maxSec: 30 });
       await sleep(1500);
       const r = await bank.depositAll(cli);
-      log(r.moved.length ? `🏦 banked: ${r.moved.join(', ')}` : '🏦 gak ada loot utk di-bank (aman)');
-    } catch (e) { log('bank err (lanjut): ' + e.message.slice(0, 50)); }
+      log(r.moved.length ? `🏦 banked: ${r.moved.join(', ')}` : '🏦 no loot to bank (safe)');
+    } catch (e) { log('bank err (continuing): ' + e.message.slice(0, 50)); }
 
     try {
       await ensureCombatSupplies();
     } catch (e) {
-      log('alchemist err (lanjut): ' + e.message.slice(0, 50));
+      log('alchemist err (continuing): ' + e.message.slice(0, 50));
     }
 
     // === ENTER WILD ===
     const entered = await enterWild(p);
-    if (!entered) { log('🛑 gagal masuk wild — reconnect'); try { p.close(); } catch {} await sleep(5000); continue; }
+    if (!entered) { log('🛑 failed to enter wild — reconnect'); try { p.close(); } catch {} await sleep(5000); continue; }
 
     // === HUNT ===
     let outcome = null;
@@ -439,7 +439,7 @@ async function connectWithRetry() {
       continue;
     }
 
-    // keluar wild sebelum reconnect (aman)
+    // exit wild before reconnecting (safe)
     try { if (/^wild/.test(p.region)) { p.setRegion('world', NORTH_PORTAL.x, NORTH_PORTAL.z + 1); await sleep(2000); } } catch {}
     expectedClose = true;
     try { p.close(); } catch {}

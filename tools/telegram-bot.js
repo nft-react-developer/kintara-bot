@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // ============ TELEGRAM CONTROL BOT — kontrol + status headless bot ============
-// Kontrol bot Kintara via Telegram: status, skill, saldo, quest, start/stop fishing.
-// Pakai lib/telegram (long-poll). Token+chatId dari .env (auto-capture chat id
-// saat pertama kirim pesan ke bot).
+// Kintara control bot via Telegram: status, skills, balance, quests, start/stop fishing.
+// Uses lib/telegram (long-poll). Token+chatId come from .env (auto-captures chat id
+// when the first message is sent to the bot).
 //
-// Pakai: node tools/telegram-bot.js
+// Usage: node tools/telegram-bot.js
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
@@ -50,11 +50,11 @@ async function ensureLoginOk() {
 }
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
 
-// Pilih shard yang BISA dimasuki wallet ini (gate=ok) dgn queue paling kecil.
-// Build 1ce1fc76 nambah entry-gate /api/auth/gate-check (membership/level/$KINS).
-// Akun ini belum lvl 20 & non-membership -> s1-s3 selalu ditolak. Maka pasang
-// FLOOR keras: cuma pilih shard >= KINTARA_MIN_SHARD (default 4). Gate-check tetap
-// jadi lapis kedua biar otomatis ngikut perubahan peta server.
+// Choose the lowest-queue shard this wallet CAN enter (gate=ok).
+// Build 1ce1fc76 added entry-gate /api/auth/gate-check (membership/level/$KINS).
+// Accounts below level 20 and without membership are always rejected from s1-s3. Therefore set
+// Hard floor: only choose shards >= KINTARA_MIN_SHARD (default 4). Gate-check remains
+// as a second layer so it automatically follows server map changes.
 const MIN_SHARD = Math.max(1, parseInt(process.env.KINTARA_MIN_SHARD || '4', 10) || 4);
 let _bestShardCache = { ts: 0, shard: null };
 async function shardGateOk(c, id) {
@@ -64,7 +64,7 @@ async function shardGateOk(c, id) {
   } catch (e) {
     // 403 = gate nolak (membership/level/kins). Selain itu (network) -> unknown.
     if (e && e.status === 403) return false;
-    return null; // unknown -> jangan langsung exclude, biar fallback yg putusin
+    return null; // unknown -> do not exclude immediately; let fallback decide
   }
 }
 async function pickBestShard(force = false) {
@@ -79,14 +79,14 @@ async function pickBestShard(force = false) {
     // FLOOR: buang s1..s(MIN_SHARD-1) kecuali bypass.
     const eligible = bypass ? list : list.filter((x) => Number(x.id) >= MIN_SHARD);
     const base = eligible.length ? eligible : list;
-    // urutkan by queue terkecil lalu non-full -> probe gate dari yg paling menarik.
+    // sort by lowest queue and then non-full -> probe the most attractive gates first.
     const ranked = [...base].sort((a, b) => (Number(a.queueLength || 0) - Number(b.queueLength || 0)) || (a.full === b.full ? 0 : a.full ? 1 : -1));
     if (bypass) {
       const shard0 = 's' + ranked[0].id;
       _bestShardCache = { ts: Date.now(), shard: shard0 };
       return shard0;
     }
-    // probe gate-check live, ambil shard pertama (queue terkecil) yg gate=ok
+    // live gate-check probe; take the first shard (lowest queue) with gate=ok
     for (const sv of ranked) {
       const ok = await shardGateOk(c, sv.id);
       if (ok === true) {
@@ -95,7 +95,7 @@ async function pickBestShard(force = false) {
         return shard;
       }
     }
-    // semua gate nolak / gak kejangkau -> fallback: shard >= floor, queue terkecil
+    // all gates rejected / unreachable -> fallback: lowest-queue shard >= floor
     const best = ranked[0];
     const shard = 's' + best.id;
     _bestShardCache = { ts: Date.now(), shard };
@@ -421,7 +421,7 @@ async function runAutoVersionReview(sha) {
         reviewAt: Date.now(),
         reviewError: null,
       });
-      await tg.send(`${lines.join('\n')}\n\n✅ Auto review PASSED.\nAutomation tetap pause dulu sampai bang start lagi manual.`).catch(() => {});
+      await tg.send(`${lines.join('\n')}\n\n✅ Auto review PASSED.\nAutomation remains paused until you start it manually again.`).catch(() => {});
     } catch (e) {
       const next = readVersionState();
       saveVersionState({
@@ -431,7 +431,7 @@ async function runAutoVersionReview(sha) {
         reviewAt: Date.now(),
         reviewError: e.message,
       });
-      await tg.send(`${lines.join('\n')}\n\n⚠️ Auto review belum lolos penuh: ${(e.message || '').slice(0, 160)}\nBot tetap pause. Perlu cek manual dulu sebelum start lagi.`).catch(() => {});
+      await tg.send(`${lines.join('\n')}\n\n⚠️ Auto review did not fully pass: ${(e.message || '').slice(0, 160)}\nBot remains paused. Manual review is needed before starting again.`).catch(() => {});
     } finally {
       activeVersionReviewSha = null;
     }
@@ -596,7 +596,7 @@ async function hSpinner() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
   const c = await client();
-  // Gate: butuh avg level >= 5 (server-side, dari playerStats.avg)
+  // Gate: requires avg level >= 5 (server-side, from playerStats.avg)
   try {
     const st = await c.playerStats(myPid);
     const avg = Number(st?.avg);
@@ -692,7 +692,7 @@ async function mkShowInventory(ctx) {
   const c = await client();
   const me = await c.me(); const bp = me.backpack || {};
   const rows = [];
-  // Marketplace sell hanya menerima item yang menempati inv slot (bukan resource bulk).
+  // Marketplace sell only accepts items occupying inventory slots, not bulk resources.
   (bp.invSlots || []).forEach((sl, i) => {
     if (sl && sl.t) {
       const lbl = ITEM_LABEL[sl.t] || sl.t;
@@ -771,7 +771,7 @@ async function mkSubmitListing(text) {
     mkReset();
     if (r && r.ok === false) return `❌ Listing rejected: ${JSON.stringify(r).slice(0, 120)}`;
     const curLabel = currency === 'token' ? `$${price} total (≈$KINS)` : `${price}g total`;
-    return `✅ <b>Listed!</b>\n${ITEM_LABEL[item] || item} x${qty} @ ${curLabel}\n\n<i>${currency === 'token' ? '$KINS masuk wallet pas ada buyer (95% kamu / 5% treasury).' : 'Dibayar gold pas ada buyer.'}</i>`;
+    return `✅ <b>Listed!</b>\n${ITEM_LABEL[item] || item} x${qty} @ ${curLabel}\n\n<i>${currency === 'token' ? '$KINS goes to your wallet when there is a buyer (95% you / 5% treasury).' : 'Gold is paid when there is a buyer.'}</i>`;
   } catch (e) {
     mkReset();
     const msg = (e.message || '').toLowerCase();
@@ -979,7 +979,7 @@ async function hStartGather(args) {
   replaceMainDesired('gather', { kind });
   const shard = await resolveShard();
   const pid = spawnBot('gather-bot.js', [kind, shard], GPIDFILE);
-  fs.writeFileSync(GPIDFILE, JSON.stringify({ pid, kind, started: Date.now() })); // simpan kind
+  fs.writeFileSync(GPIDFILE, JSON.stringify({ pid, kind, started: Date.now() })); // save kind
   return `${lbl} STARTED (pid ${pid}) on shard <b>${shard}</b> (lowest queue)${running ? ` [switched from ${cur?.kind || '?'}]` : ''}. Queue time is about ~10 minutes. Check /status.`;
 }
 async function hAuto() {
@@ -1041,7 +1041,7 @@ async function hServers() {
 
 const commands = {
   start: () => hHelp(), help: () => hHelp(),
-  status: hStatus, skills: hSkills, balance: hBalance, saldo: hBalance, market: hMarket, harga: hMarket, version: hVersion, versi: hVersion,
+  status: hStatus, skills: hSkills, balance: hBalance, market: hMarket, version: hVersion,
   quest: hQuest, diag: hDiag, fishing: hStartFish, fish: hStartFish, stop: hStop,
   server: hServers, servers: hServers,
   spinner: hSpinner, spin: hSpinner,
@@ -1050,7 +1050,7 @@ const commands = {
   sell: () => '💰 Selling becomes available after the tutorial is completed.',
 };
 
-// Set menu command Telegram = HANYA yg dipakai sekarang (hapus sisa lama)
+// Set Telegram menu commands to only the currently supported commands, removing stale ones
 const MENU = [
   { command: 'fishing', description: '🎣 Fishing + cooking' },
   { command: 'gather', description: '🪓 Chop wood' },
@@ -1075,7 +1075,7 @@ async function syncMenu() {
     await fetch(`https://api.telegram.org/bot${config.telegramToken}/setMyCommands`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commands: MENU }),
     });
-    console.log('[telegram-bot] menu command di-sync (' + MENU.length + ' command)');
+    console.log('[telegram-bot] menu commands synced (' + MENU.length + ' command)');
   } catch (e) { console.error('syncMenu err', e.message); }
 }
 

@@ -104,12 +104,12 @@ const config = {
   bankKeepGold: parseInt(process.env.BANK_KEEP_GOLD || '200', 10), // gold kept on hand; extra is deposited
 
   // ---- Combat supplies ----
-  combatMinGold: parseInt(process.env.COMBAT_MIN_GOLD || '20', 10), // jangan belanja potion kalau bikin gold turun di bawah ini
+  combatMinGold: parseInt(process.env.COMBAT_MIN_GOLD || '20', 10), // do not buy potions if gold would drop below this
   combatMinHealthPotions: parseInt(process.env.COMBAT_MIN_HEALTH_POTIONS || '6', 10),
   combatMinShieldPotions: parseInt(process.env.COMBAT_MIN_SHIELD_POTIONS || '2', 10),
 
-  // ---- Core-loop FABRICATION (client-authoritative). RISIKO: langgar ToS / anti-cheat. ----
-  // Master kill-switch: SEMUA aksi fabricated mati kalau ini false.
+  // ---- Core-loop FABRICATION (client-authoritative). RISK: may violate ToS / anti-cheat. ----
+  // Master kill-switch: all fabricated actions are disabled when this is false.
   fabricateEnabled: (process.env.FABRICATE_ENABLED || 'false').toLowerCase() === 'true',
 
   // Auto-gather: increases resources and skill XP via save-backpack/save-skills.

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // ============ GATHER BOT — autopilot wood/stone/coal/metal (Path A, headless) ============
-// Connect world -> belajar node dari res_evt -> walk adjacent -> harvestNode
-// (harv->proof->harv_hit s/d felled) -> save-backpack loot -> ulang. Level
+// Connect world -> learn nodes from res_evt -> walk adjacent -> harvestNode
+// (harv->proof->harv_hit until felled) -> save-backpack loot -> repeat. Level
 // woodcutting/mining. Supervisor reconnect, tahan 502.
 //
-// Pakai: node tools/gather-bot.js [kind=tree|rock] [shard=s2]
+// Usage: node tools/gather-bot.js [kind=tree|rock] [shard=s2]
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
@@ -65,7 +65,7 @@ async function createClientWithRetry() {
       if (isWalletBannedError(e)) throw e;
       const waitMs = retryDelayMs(attempt);
       saveState({ phase: 'bootstrap_retry', queueAhead: null });
-      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 50)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      log(`bootstrap attempt ${attempt} failed: ${String(e.message || e).slice(0, 50)} — retry ${Math.ceil(waitMs / 1000)}s`);
       await sleep(waitMs);
     }
   }
@@ -97,7 +97,7 @@ async function connectWithRetry() {
       saveState({ phase: 'reconnect', queueAhead: null });
       const waitMs = retryDelayMs(attempt);
       saveState({ phase: 'reconnect_wait', queueAhead: null });
-      log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 50)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      log(`connect attempt ${attempt} failed: ${e.message.slice(0, 50)} — retry ${Math.ceil(waitMs / 1000)}s`);
       await sleep(waitMs);
     }
   }
@@ -127,8 +127,8 @@ async function gatherLoop(p) {
     saveState({ phase: 'scan', queueAhead: null, region: p.region });
     const pool = KIND === 'all' ? [...p.knownNodes('tree'), ...p.knownNodes('rock')] : p.knownNodes(KIND);
     const nodes = pool.filter((n) => !harvested.has(n.key));
-    if (!nodes.length) { logT('wait', 'nunggu node dari res_evt...'); await sleep(5000); continue; }
-    // pilih node terdekat dari posisi sekarang
+    if (!nodes.length) { logT('wait', 'waiting for nodes from res_evt...'); await sleep(5000); continue; }
+    // choose the nearest node from the current position
     nodes.sort((a, b) => {
       const [ac, ar] = a.key.split(',').map(Number), [bc, br] = b.key.split(',').map(Number);
       const da = Math.abs(ac - 30.5 - p.pos.x) + Math.abs(ar - 30.5 - p.pos.z);
@@ -145,7 +145,7 @@ async function gatherLoop(p) {
     if (res.felled) { stats.felled++; await persistLoot(res.loot, 1); logT('fell', `🪓 felled ${node.kind} @${node.key} -> ${res.loot} (wood=${stats.wood} stone=${stats.stone} coal=${stats.coal} metal=${stats.metal}, felled ${stats.felled})`, 15000); }
     saveState({ phase: 'gather', queueAhead: null, region: p.region });
     await sleep(1500);
-    if (harvested.size > 200) harvested.clear(); // reset biar bisa re-harvest (node respawn)
+    if (harvested.size > 200) harvested.clear(); // reset so nodes can be re-harvested after respawn
   }
 }
 
@@ -162,7 +162,7 @@ async function gatherLoop(p) {
     const p = await connectWithRetry();
     p.on('close', () => { stats.reconnects++; saveState({ phase: 'reconnect', queueAhead: null, region: p.region }); log('⚠️ presence closed -> reconnect'); });
     await sleep(2000);
-    // diam dulu 8s biar kekumpul node dari res_evt
+    // wait 8s so nodes from res_evt can accumulate
     saveState({ phase: 'learning', queueAhead: null, region: p.region });
     log('belajar node 8s...'); await sleep(8000);
     await gatherLoop(p);

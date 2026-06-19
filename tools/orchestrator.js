@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// ============ ORCHESTRATOR BRAIN — pilih aktivitas otomatis by goal ============
-// Tiap interval: evaluasi skill + inventory + quest -> pilih aktivitas terbaik
-// (fishing ATAU gather) -> kelola proses bot (start/stop). 1 akun = 1 aktivitas
-// (beda realm), jadi switch = restart bot (antri lagi) — switch HEMAT (cuma pas
-// goal-chunk selesai, bukan tiap menit).
+// ============ ORCHESTRATOR BRAIN — choose activity automatically by goal ============
+// Every interval: evaluate skills + inventory + quests -> choose the best activity
+// (fishing OR gather) -> manage bot processes (start/stop). 1 account = 1 activity
+// (different realms), so switching means restarting the bot and queuing again — switch sparingly, only when
+// goal chunk is complete, not every minute).
 //
 // Goal priority (default):
-//   1) Cooking skill rendah (avg butuh naik) / butuh ikan -> FISHING (fish+cook)
-//   2) Woodcutting/mining rendah / butuh material (build/sell) -> GATHER (all)
-//   3) Default -> FISHING (XP value tinggi)
+//   1) Low cooking skill (average needs to rise) / fish needed -> FISHING (fish+cook)
+//   2) Low woodcutting/mining / materials needed (build/sell) -> GATHER (all)
+//   3) Default -> FISHING (high XP value)
 //
-// Pakai: node tools/orchestrator.js
+// Usage: node tools/orchestrator.js
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
@@ -74,7 +74,7 @@ function spawnDetached(script, args, pidfile, extra = {}) {
 }
 
 const EVAL_MS = 600000;          // evaluasi tiap 10 menit (switch hemat)
-const MIN_RUN_MS = 1500000;      // minimal 25 menit per aktivitas sebelum boleh switch (hindari antri bolak-balik)
+const MIN_RUN_MS = 1500000;      // minimum 25 minutes per activity before switching is allowed (avoid queue ping-pong)
 
 let cli, lastAuth = 0, current = null, currentSince = 0, myPid = null;
 async function client() { if (!cli) { const { client: c, player } = await KintaraClient.create(); cli = c; myPid = player?.id || myPid; lastAuth = Date.now(); } return cli; }
@@ -82,9 +82,9 @@ function saveState(data) {
   fs.writeFileSync(STATEFILE, JSON.stringify({ ...data, ts: Date.now() }, null, 2));
 }
 
-// Pilih shard yg BISA dimasuki wallet (gate=ok) dgn queue terkecil. Akun belum
-// lvl 20 & non-membership -> s1-s3 ditolak. FLOOR keras: shard >= KINTARA_MIN_SHARD
-// (default 4). gate-check jadi lapis kedua biar ngikut perubahan peta server.
+// Choose the lowest-queue shard this wallet CAN enter (gate=ok). Accounts that are not
+// level 20 and without membership are rejected from s1-s3. Hard floor: shard >= KINTARA_MIN_SHARD
+// (default 4). gate-check is the second layer so it follows server map changes.
 const ORCH_MIN_SHARD = Math.max(1, parseInt(process.env.KINTARA_MIN_SHARD || '4', 10) || 4);
 let _shardCache = { ts: 0, shard: null };
 async function pickShard() {
@@ -111,7 +111,7 @@ async function pickShard() {
 }
 
 async function ensureOnly(activity) {
-  // pastikan cuma `activity` yg jalan
+  // ensure only `activity` is running
   const fp = pidOf(FPID), gp = pidOf(GPID), combatPid = pidOf(CPID);
   const gatherMeta = readJson(GPID);
   if (combatPid) { try { process.kill(combatPid, 'SIGKILL'); } catch {} safeUnlink(CPID); safeUnlink(CSTATE); }
@@ -193,7 +193,7 @@ async function decide() {
         currentLabel: current === 'fish' ? 'Fishing' : current === 'gather' ? 'Gather' : current,
         currentSince,
         currentAgeMin: currentSince ? Math.round((Date.now() - currentSince) / 60000) : 0,
-        currentWhy: switched ? d.why : (d.goal === current ? d.why : 'mode sekarang masih dipertahankan'),
+        currentWhy: switched ? d.why : (d.goal === current ? d.why : 'current mode is still being held'),
         desiredGoal: d.goal,
         desiredLabel: d.goal === 'fish' ? 'Fishing' : d.goal === 'gather' ? 'Gather' : d.goal,
         desiredWhy: d.why,
@@ -203,7 +203,7 @@ async function decide() {
     } catch (e) {
       log('err: ' + (e.message || '').slice(0, 60));
       if (isWalletBannedError(e)) {
-        await tg.send('⛔ Orchestrator berhenti: wallet kena ban server (`wallet_banned`), jadi login ditolak.').catch(() => {});
+        await tg.send('⛔ Orchestrator stopped: wallet is banned by the server (`wallet_banned`), so login was rejected.').catch(() => {});
         process.exit(1);
       }
       if (/cookie|401/.test(e.message || '')) { cli = null; lastAuth = 0; }
