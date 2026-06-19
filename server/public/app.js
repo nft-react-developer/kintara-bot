@@ -83,6 +83,7 @@ function renderBots(bots) {
           <span>Player</span><b>${esc(valueOrDash(bot.playerName))}</b>
           <span>Activity</span><b>${esc(valueOrDash(bot.activity))}</b>
           <span>Avg level</span><b>${esc(valueOrDash(bot.levels?.avg))}</b>
+          <span>Fighting XP</span><b>${esc(valueOrDash(bot.levels?.combat))}</b>
           <span>Fishing XP</span><b>${esc(valueOrDash(bot.levels?.fishing))}</b>
           <span>Mining XP</span><b>${esc(valueOrDash(bot.levels?.mining))}</b>
           <span>Free spinner</span><b><span class="spinner ${esc(bot.spinner?.status || 'unknown')}">${esc(spinnerText(bot.spinner))}</span></b>
