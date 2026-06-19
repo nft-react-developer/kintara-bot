@@ -579,12 +579,23 @@ async function hSkills() {
   const c = await client(); const st = await c.playerStats(myPid).catch(() => ({}));
   const xp = st.skillXp || {};
   let spinLine;
+  let dailySpinnerLastMs = null;
   try {
     const me = await c.me();
+    dailySpinnerLastMs = me?.meta?.dailySpinnerLastMs ?? null;
     spinLine = fmtSpinnerReady(me?.meta?.dailySpinnerLastMs);
   } catch { spinLine = '🎡 Spinner: status ?'; }
   const avg = Number.isFinite(Number(st.avg)) ? Number(st.avg) : averageLevelFloor(xp);
   const avgPrecise = preciseAverageLevel(xp).toFixed(2);
+  try {
+    fs.writeFileSync(path.join(OUT, 'skills-state.json'), JSON.stringify({
+      skillXp: xp,
+      avg,
+      avgPrecise: Number(avgPrecise),
+      dailySpinnerLastMs,
+      updatedAt: Date.now(),
+    }, null, 2));
+  } catch {}
   const unlock = avg >= 5 ? '✅ spinner unlocked' : `🔒 spinner requires avg 5 (now ${avg})`;
   const line = (icon, key, label) => {
     const val = xp[key] || 0;

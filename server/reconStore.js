@@ -14,6 +14,7 @@ const STATE_FILES = {
   gather: 'gather-state.json',
   combat: 'combat-state.json',
   orchestrator: 'orchestrator-state.json',
+  skills: 'skills-state.json',
   dailyQuest: 'daily-quest-state.json',
   tutorial: 'tutorial-watch-state.json',
 };
@@ -101,9 +102,10 @@ function buildInventory(states) {
 
 function buildLevels(states) {
   const snapshot = states.orchestrator.data?.snapshot || {};
+  const skills = states.skills.data || {};
   const xp = buildSkillXp(states);
   return {
-    avg: snapshot.avg ?? averageLevelFloor(xp),
+    avg: skills.avg ?? snapshot.avg ?? averageLevelFloor(xp),
     fishing: xp.fishing ?? null,
     woodcutting: xp.woodcutting ?? null,
     mining: xp.mining ?? null,
@@ -115,17 +117,19 @@ function buildLevels(states) {
 
 function buildSkillXp(states) {
   const snapshot = states.orchestrator.data?.snapshot || {};
+  const skills = states.skills.data || {};
   return {
     ...(snapshot.skillXp || {}),
+    ...(skills.skillXp || {}),
     ...(states.fishing.data?.skillXp || {}),
     ...(states.gather.data?.skillXp || {}),
     ...(states.combat.data?.skillXp || {}),
-    combat: states.combat.data?.combatNow ?? states.combat.data?.skillXp?.combat ?? snapshot.combat ?? snapshot.skillXp?.combat ?? 0,
-    woodcutting: snapshot.woodcutting ?? states.gather.data?.skillXp?.woodcutting ?? snapshot.skillXp?.woodcutting ?? 0,
-    mining: snapshot.mining ?? states.gather.data?.skillXp?.mining ?? snapshot.skillXp?.mining ?? 0,
-    fishing: snapshot.fishing ?? states.fishing.data?.skillXp?.fishing ?? snapshot.skillXp?.fishing ?? 0,
-    cooking: snapshot.cooking ?? states.fishing.data?.skillXp?.cooking ?? snapshot.skillXp?.cooking ?? 0,
-    smithing: snapshot.smithing ?? snapshot.skillXp?.smithing ?? 0,
+    combat: skills.skillXp?.combat ?? states.combat.data?.combatNow ?? states.combat.data?.skillXp?.combat ?? snapshot.combat ?? snapshot.skillXp?.combat ?? 0,
+    woodcutting: skills.skillXp?.woodcutting ?? snapshot.woodcutting ?? states.gather.data?.skillXp?.woodcutting ?? snapshot.skillXp?.woodcutting ?? 0,
+    mining: skills.skillXp?.mining ?? snapshot.mining ?? states.gather.data?.skillXp?.mining ?? snapshot.skillXp?.mining ?? 0,
+    fishing: skills.skillXp?.fishing ?? snapshot.fishing ?? states.fishing.data?.skillXp?.fishing ?? snapshot.skillXp?.fishing ?? 0,
+    cooking: skills.skillXp?.cooking ?? snapshot.cooking ?? states.fishing.data?.skillXp?.cooking ?? snapshot.skillXp?.cooking ?? 0,
+    smithing: skills.skillXp?.smithing ?? snapshot.smithing ?? snapshot.skillXp?.smithing ?? 0,
   };
 }
 
@@ -150,8 +154,15 @@ function fmtSpinnerReadyForSkills(spinner) {
 function buildSkillSummary(states, spinner) {
   const xp = buildSkillXp(states);
   const snapshot = states.orchestrator.data?.snapshot || {};
-  const avg = Number.isFinite(Number(snapshot.avg)) ? Number(snapshot.avg) : averageLevelFloor(xp);
-  const avgPrecise = preciseAverageLevel(xp).toFixed(2);
+  const skills = states.skills.data || {};
+  const avg = Number.isFinite(Number(skills.avg))
+    ? Number(skills.avg)
+    : Number.isFinite(Number(snapshot.avg))
+      ? Number(snapshot.avg)
+      : averageLevelFloor(xp);
+  const avgPrecise = Number.isFinite(Number(skills.avgPrecise))
+    ? Number(skills.avgPrecise).toFixed(2)
+    : preciseAverageLevel(xp).toFixed(2);
   return {
     level: `avg lvl ${avg} • precise ${avgPrecise}`,
     rows: SKILL_ROWS.map(([key, icon, label]) => ({
