@@ -266,9 +266,28 @@ async function desiredServiceSpec(name, meta = {}) {
   if (name === 'combat') return { script: 'combat-bot.js', args: [shard], pidfile: CPIDFILE, label: 'Combat bot', shard };
   return null;
 }
+function liveMainService() {
+  if (pidOf(OPIDFILE)) return 'auto';
+  if (combatPid()) return 'combat';
+  if (gatherPid()) return 'gather';
+  if (botPid()) return 'fish';
+  return null;
+}
+function stopMainService(name) {
+  if (name === 'auto') return stopPidfile(OPIDFILE);
+  if (name === 'combat') return stopPidfile(CPIDFILE);
+  if (name === 'gather') return stopPidfile(GPIDFILE);
+  if (name === 'fish') return stopPidfile(PIDFILE);
+  return null;
+}
 async function ensureDesiredServices() {
   const state = normalizeDesiredState(readAutoreviveState());
   saveAutoreviveState(state);
+  const desiredMain = state.auto ? 'auto' : state.combat ? 'combat' : state.gather ? 'gather' : state.fish ? 'fish' : null;
+  const liveMain = liveMainService();
+  if (desiredMain && liveMain && liveMain !== desiredMain) {
+    stopMainService(liveMain);
+  }
   for (const [name, meta] of Object.entries(state)) {
     const spec = await desiredServiceSpec(name, meta);
     if (!spec) continue;
