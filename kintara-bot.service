@@ -1,0 +1,18 @@
+[Unit]
+Description=RY GROUP — Kintara Farming Bot (Telegram controller)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+ExecStart=/usr/bin/node __WORKDIR__/tools/telegram-bot.js
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+StandardOutput=journal
+StandardError=journal
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

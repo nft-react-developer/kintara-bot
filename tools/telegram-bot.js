@@ -1083,6 +1083,11 @@ async function syncMenu() {
   fs.mkdirSync(path.join(OUT, 'control'), { recursive: true });
   fs.writeFileSync(TGPIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() }));
   process.on('exit', () => { try { fs.unlinkSync(TGPIDFILE); } catch {} });
+  process.on('SIGINT', () => { console.log('[telegram-bot] SIGINT received, exiting'); process.exit(0); });
+  process.on('SIGTERM', () => { console.log('[telegram-bot] SIGTERM received, exiting'); process.exit(0); });
+  process.on('SIGHUP', () => { console.log('[telegram-bot] SIGHUP received, exiting'); process.exit(0); });
+  process.on('uncaughtException', (err) => { console.error('[telegram-bot] uncaughtException', err?.stack || err?.message || err); process.exit(1); });
+  process.on('unhandledRejection', (err) => { console.error('[telegram-bot] unhandledRejection', err?.stack || err?.message || err); process.exit(1); });
   syncDesiredFromLive();
   await syncMenu();
   await maybeNotifyVersionChange();
