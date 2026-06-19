@@ -68,6 +68,21 @@ function saveState(extra = {}) {
 }
 
 let cli;
+async function createClientWithRetry() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await KintaraClient.create();
+    } catch (e) {
+      if (isWalletBannedError(e)) throw e;
+      const waitMs = retryDelayMs(attempt);
+      stats.phase = 'bootstrap_retry';
+      stats.queueAhead = null;
+      saveState();
+      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs);
+    }
+  }
+}
 let healthLeft = 0, shieldLeft = 0;   // diisi dari backpack saat start (server authoritative)
 let lastPotionAt = 0;
 let mats = { gold: 0, wood: 0, stone: 0, coal: 0, metal: 0 };
@@ -359,7 +374,7 @@ async function connectWithRetry() {
   try { fs.writeFileSync(LOGFILE, ''); } catch {}
   try { fs.mkdirSync(path.dirname(PIDFILE), { recursive: true }); fs.writeFileSync(PIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() })); } catch {}
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
-  const { client: c, player } = await KintaraClient.create();
+  const { client: c, player } = await createClientWithRetry();
   cli = c;
   saveState();
   log('COMBAT BOT START pid=' + player?.id + ' shard=' + SHARD);

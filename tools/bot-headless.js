@@ -29,6 +29,21 @@ let cli, auth;
 const stats = { fish: 0, casts: 0, ok: 0, cooked: 0, sold: 0, rate: 0, reconnects: 0, started: Date.now(), shard: SHARD, region: 'world', phase: 'boot', queueAhead: null };
 
 async function freshAuth() { const r = await KintaraClient.create(); cli = r.client; auth = { cookie: cli.cookie, player: r.player }; return auth; }
+async function createClientWithRetry() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await KintaraClient.create();
+    } catch (e) {
+      if (isWalletBannedError(e)) throw e;
+      const waitMs = retryDelayMs(attempt);
+      stats.phase = 'bootstrap_retry';
+      stats.queueAhead = null;
+      saveState();
+      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs);
+    }
+  }
+}
 
 async function connectWithRetry() {
   let transientGatewayFails = 0;
@@ -188,7 +203,7 @@ async function fishLoop(p) {
   fs.writeFileSync(path.join(OUT, 'bot.log'), '');
   fs.writeFileSync(PIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() }));
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
-  await freshAuth();
+  const first = await createClientWithRetry(); cli = first.client; auth = { cookie: cli.cookie, player: first.player };
   const me0 = await cli.me().catch(() => ({}));
   log('BOT START pid=' + auth.player?.id + ' fish0=' + me0?.backpack?.fish);
   stats.fish = me0?.backpack?.fish || 0;

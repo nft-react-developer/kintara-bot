@@ -53,6 +53,19 @@ function saveState(extra = {}) {
 }
 
 let cli;
+async function createClientWithRetry() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await KintaraClient.create();
+    } catch (e) {
+      if (isWalletBannedError(e)) throw e;
+      const waitMs = retryDelayMs(attempt);
+      saveState({ phase: 'bootstrap_retry', queueAhead: null });
+      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 50)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs);
+    }
+  }
+}
 async function connectWithRetry() {
   let transientGatewayFails = 0;
   for (let attempt = 1; ; attempt++) {
@@ -138,7 +151,7 @@ async function gatherLoop(p) {
   fs.writeFileSync(PIDFILE, JSON.stringify({ pid: process.pid, kind: KIND, shard: SHARD, started: Date.now() }));
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
   saveState({ phase: 'boot', queueAhead: null, region: 'world' });
-  const { client: c, player } = await KintaraClient.create(); cli = c;
+  const { client: c, player } = await createClientWithRetry(); cli = c;
   log('GATHER BOT START kind=' + KIND + ' pid=' + player?.id);
   for (;;) {
     const p = await connectWithRetry();
