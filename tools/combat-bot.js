@@ -62,6 +62,7 @@ const stats = {
   kills: 0, hits: 0, combatStart: null, combatNow: null, combatGain: 0,
   potionsHealth: 0, potionsShield: 0, retreats: 0, deaths: 0, reconnects: 0,
   hp: 100, region: 'world', phase: 'boot', queueAhead: null, started: Date.now(),
+  skillXp: {},
 };
 function saveState(extra = {}) {
   try { fs.writeFileSync(STATEFILE, JSON.stringify({ ...stats, ...extra, ageMin: Math.round((Date.now() - stats.started) / 60000) }, null, 2)); } catch {}
@@ -221,7 +222,13 @@ async function enterWild(p) {
   stats.queueAhead = null;
   log(`✅ entered wild region=${p.region} tile=${JSON.stringify(p.wildTile())}`);
   // baseline combat XP (playerStats.skillXp.combat — bukan me())
-  try { const st = await cli.playerStats(p.myId); stats.combatStart = st?.skillXp?.combat ?? 0; stats.combatNow = stats.combatStart; log(`baseline combat XP=${stats.combatStart}`); } catch {}
+  try {
+    const st = await cli.playerStats(p.myId);
+    if (st?.skillXp) stats.skillXp = { ...stats.skillXp, ...st.skillXp };
+    stats.combatStart = st?.skillXp?.combat ?? 0;
+    stats.combatNow = stats.combatStart;
+    log(`baseline combat XP=${stats.combatStart}`);
+  } catch {}
   await refreshPotionCounts();
   saveState();
   log(`🧪 potions: health=${healthLeft} shield=${shieldLeft}`);
@@ -339,6 +346,7 @@ async function connectWithRetry() {
       });
       p.on('skill_xp', (xp) => {
         if (xp && xp.combat != null) {
+          stats.skillXp = { ...stats.skillXp, ...xp };
           stats.combatNow = xp.combat;
           if (stats.combatStart != null) stats.combatGain = xp.combat - stats.combatStart;
           saveState();

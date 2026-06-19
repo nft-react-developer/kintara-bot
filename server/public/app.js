@@ -40,6 +40,21 @@ function spinnerText(spinner) {
   return spinner.label || 'Unknown';
 }
 
+function skillRows(bot) {
+  const rows = Array.isArray(bot.skills?.rows) ? bot.skills.rows : [];
+  if (rows.length) {
+    return rows.map((row) => `
+          <span>${esc(row.label)}</span><b>${esc(valueOrDash(row.value))}</b>`).join('');
+  }
+  return `
+          <span>⚔️ combat</span><b>${esc(valueOrDash(bot.levels?.combat))}</b>
+          <span>🪓 woodcutting</span><b>${esc(valueOrDash(bot.levels?.woodcutting))}</b>
+          <span>⛏ mining</span><b>${esc(valueOrDash(bot.levels?.mining))}</b>
+          <span>🎣 fishing</span><b>${esc(valueOrDash(bot.levels?.fishing))}</b>
+          <span>🍳 cooking</span><b>${esc(valueOrDash(bot.levels?.cooking))}</b>
+          <span>🔨 smithing</span><b>${esc(valueOrDash(bot.levels?.smithing))}</b>`;
+}
+
 const STATUS_TOOLTIPS = {
   Active: 'Active means the recon data changed within the last 5 minutes.',
   Stale: 'Stale means recon data exists, but it has not changed for 5 to 30 minutes.',
@@ -82,12 +97,9 @@ function renderBots(bots) {
         <div class="kv">
           <span>Player</span><b>${esc(valueOrDash(bot.playerName))}</b>
           <span>Activity</span><b>${esc(valueOrDash(bot.activity))}</b>
-          <span>Avg level</span><b>${esc(valueOrDash(bot.levels?.avg))}</b>
-          <span>Fighting XP</span><b>${esc(valueOrDash(bot.levels?.combat))}</b>
-          <span>Fishing XP</span><b>${esc(valueOrDash(bot.levels?.fishing))}</b>
-          <span>Mining XP</span><b>${esc(valueOrDash(bot.levels?.mining))}</b>
-          <span>Free spinner</span><b><span class="spinner ${esc(bot.spinner?.status || 'unknown')}">${esc(spinnerText(bot.spinner))}</span></b>
-          <span>Last seen</span><b>${fmtAge(bot.lastSeenMs)}</b>
+          <span>📊 Level</span><b>${esc(valueOrDash(bot.skills?.level || bot.levels?.avg))}</b>
+          ${skillRows(bot)}
+          <span>Spinner</span><b><span class="spinner ${esc(bot.spinner?.status || 'unknown')}">${esc(valueOrDash(bot.skills?.spinner || spinnerText(bot.spinner)))}</span></b>
         </div>
         <div class="items">${items || '<span class="muted">No item state yet</span>'}</div>
       </article>`;

@@ -36,6 +36,7 @@ const stats = {
   harvests: 0,
   reconnects: 0,
   started: Date.now(),
+  skillXp: {},
 };
 function saveState(extra = {}) {
   fs.writeFileSync(path.join(OUT, 'gather-state.json'), JSON.stringify({
@@ -80,6 +81,11 @@ async function connectWithRetry() {
       p.on('queue', (d) => {
         if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead);
         saveState({ phase: 'queue', queueAhead: Number.isFinite(Number(d?.ahead)) ? Number(d.ahead) : null, region: p.region });
+      });
+      p.on('skill_xp', (xp) => {
+        if (!xp) return;
+        stats.skillXp = { ...stats.skillXp, ...xp };
+        saveState({ region: p.region });
       });
       await p.connect();
       transientGatewayFails = 0;
@@ -158,6 +164,8 @@ async function gatherLoop(p) {
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
   saveState({ phase: 'boot', queueAhead: null, region: 'world' });
   const { client: c, player } = await createClientWithRetry(); cli = c;
+  const st0 = await cli.playerStats(player?.id).catch(() => ({}));
+  if (st0?.skillXp) stats.skillXp = { ...stats.skillXp, ...st0.skillXp };
   log('GATHER BOT START kind=' + KIND + ' pid=' + player?.id);
   for (;;) {
     const p = await connectWithRetry();

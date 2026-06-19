@@ -26,7 +26,7 @@ const isTransientGatewayErr = (msg) => /503|Unexpected token '<'|<!doctype|Non-J
 const PORTAL = { x: 61 - 30.5, z: 31 - 30.5 }; // mainland east -> pond
 
 let cli, auth;
-const stats = { fish: 0, casts: 0, ok: 0, cooked: 0, sold: 0, rate: 0, reconnects: 0, started: Date.now(), shard: SHARD, region: 'world', phase: 'boot', queueAhead: null };
+const stats = { fish: 0, casts: 0, ok: 0, cooked: 0, sold: 0, rate: 0, reconnects: 0, started: Date.now(), shard: SHARD, region: 'world', phase: 'boot', queueAhead: null, skillXp: {} };
 
 async function freshAuth() { const r = await KintaraClient.create(); cli = r.client; auth = { cookie: cli.cookie, player: r.player }; return auth; }
 async function createClientWithRetry() {
@@ -141,7 +141,13 @@ async function catchOne(p) {
   p.setFishing(fc, fr, 2); await sleep(1600);
   try {
     const g = await cli.grantFishXp({}); p.clearAct(); stats.casts++;
-    if (g?.ok !== false) { stats.ok++; stats.fish = g?.backpack?.fish ?? stats.fish; saveState(); logThrottle('catch', `🎣 fish=${stats.fish} xp=${g?.xp?.fishing} (ok ${stats.ok}/${stats.casts})`, 20000); }
+    if (g?.ok !== false) {
+      stats.ok++;
+      stats.fish = g?.backpack?.fish ?? stats.fish;
+      if (g?.xp) stats.skillXp = { ...stats.skillXp, ...g.xp };
+      saveState();
+      logThrottle('catch', `🎣 fish=${stats.fish} xp=${g?.xp?.fishing} (ok ${stats.ok}/${stats.casts})`, 20000);
+    }
   } catch (e) {
     p.clearAct(); const m = e.message || '';
     if (/rate_limited/.test(m)) stats.rate++;
@@ -158,7 +164,15 @@ async function cookBatch(p, n) {
   await sleep(1500);
   let cooked = 0;
   for (let i = 0; i < n; i++) {
-    try { const r = await cli.grantCookXp({ mode: 'fish' }); if (r?.ok !== false) { cooked++; stats.cooked = r?.backpack?.cooked_fish_meat ?? stats.cooked; } }
+    try {
+      const r = await cli.grantCookXp({ mode: 'fish' });
+      if (r?.ok !== false) {
+        cooked++;
+        stats.cooked = r?.backpack?.cooked_fish_meat ?? stats.cooked;
+        if (r?.xp) stats.skillXp = { ...stats.skillXp, ...r.xp };
+        saveState();
+      }
+    }
     catch (e) { if (!/rate_limited/.test(e.message)) { logThrottle('cook', 'cook err: ' + e.message.slice(0, 40)); break; } }
     await sleep(4500);
   }
@@ -212,6 +226,8 @@ async function fishLoop(p) {
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
   const first = await createClientWithRetry(); cli = first.client; auth = { cookie: cli.cookie, player: first.player };
   const me0 = await cli.me().catch(() => ({}));
+  const st0 = await cli.playerStats(auth.player?.id).catch(() => ({}));
+  if (st0?.skillXp) stats.skillXp = { ...stats.skillXp, ...st0.skillXp };
   trackAccountMeta(me0);
   log('BOT START pid=' + auth.player?.id + ' fish0=' + me0?.backpack?.fish);
   stats.fish = me0?.backpack?.fish || 0;

@@ -2,6 +2,12 @@
 // Read-only helpers for aggregating bot state from mounted recon directories.
 const fs = require('fs');
 const path = require('path');
+const {
+  levelFromTotalXp,
+  preciseAverageLevel,
+  averageLevelFloor,
+  formatSkillBandProgressShort,
+} = require('../lib/skillXp');
 
 const STATE_FILES = {
   fishing: 'bot-state.json',
@@ -22,6 +28,14 @@ const ACTIVITY_LABELS = {
 };
 
 const FREE_SPINNER_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const SKILL_ROWS = [
+  ['combat', '⚔️', 'combat'],
+  ['woodcutting', '🪓', 'woodcutting'],
+  ['mining', '⛏', 'mining'],
+  ['fishing', '🎣', 'fishing'],
+  ['cooking', '🍳', 'cooking'],
+  ['smithing', '🔨', 'smithing'],
+];
 
 function safeStat(filePath) {
   try { return fs.statSync(filePath); } catch { return null; }
@@ -87,12 +101,66 @@ function buildInventory(states) {
 
 function buildLevels(states) {
   const snapshot = states.orchestrator.data?.snapshot || {};
+  const xp = buildSkillXp(states);
   return {
-    avg: snapshot.avg ?? null,
-    fishing: snapshot.fishing ?? null,
-    woodcutting: snapshot.woodcutting ?? null,
-    mining: snapshot.mining ?? null,
-    combat: states.combat.data?.combatNow ?? null,
+    avg: snapshot.avg ?? averageLevelFloor(xp),
+    fishing: xp.fishing ?? null,
+    woodcutting: xp.woodcutting ?? null,
+    mining: xp.mining ?? null,
+    combat: xp.combat ?? null,
+    cooking: xp.cooking ?? null,
+    smithing: xp.smithing ?? null,
+  };
+}
+
+function buildSkillXp(states) {
+  const snapshot = states.orchestrator.data?.snapshot || {};
+  return {
+    ...(snapshot.skillXp || {}),
+    ...(states.fishing.data?.skillXp || {}),
+    ...(states.gather.data?.skillXp || {}),
+    ...(states.combat.data?.skillXp || {}),
+    combat: states.combat.data?.combatNow ?? states.combat.data?.skillXp?.combat ?? snapshot.combat ?? snapshot.skillXp?.combat ?? 0,
+    woodcutting: snapshot.woodcutting ?? states.gather.data?.skillXp?.woodcutting ?? snapshot.skillXp?.woodcutting ?? 0,
+    mining: snapshot.mining ?? states.gather.data?.skillXp?.mining ?? snapshot.skillXp?.mining ?? 0,
+    fishing: snapshot.fishing ?? states.fishing.data?.skillXp?.fishing ?? snapshot.skillXp?.fishing ?? 0,
+    cooking: snapshot.cooking ?? states.fishing.data?.skillXp?.cooking ?? snapshot.skillXp?.cooking ?? 0,
+    smithing: snapshot.smithing ?? snapshot.skillXp?.smithing ?? 0,
+  };
+}
+
+function formatSkillLine(xpBySkill, key) {
+  const val = xpBySkill[key] || 0;
+  return `lvl ${levelFromTotalXp(val)} • ${formatSkillBandProgressShort(val)}`;
+}
+
+function fmtSpinnerReadyForSkills(spinner) {
+  if (!spinner) return 'status ?';
+  if (spinner.status === 'ready') return '✅ FREE SPIN READY — type /spinner';
+  if (spinner.status === 'waiting') {
+    const left = Math.max(0, Number(spinner.remainingMs) || 0);
+    const h = Math.floor(left / 3600000);
+    const m = Math.round((left % 3600000) / 60000);
+    return `⏳ ready in ${h}h ${m}m`;
+  }
+  if (spinner.status === 'locked') return spinner.label || 'locked';
+  return 'status ?';
+}
+
+function buildSkillSummary(states, spinner) {
+  const xp = buildSkillXp(states);
+  const snapshot = states.orchestrator.data?.snapshot || {};
+  const avg = Number.isFinite(Number(snapshot.avg)) ? Number(snapshot.avg) : averageLevelFloor(xp);
+  const avgPrecise = preciseAverageLevel(xp).toFixed(2);
+  const unlock = avg >= 5 ? '✅ spinner unlocked' : `🔒 spinner requires avg 5 (now ${avg})`;
+  return {
+    level: `avg lvl ${avg} • precise ${avgPrecise}`,
+    rows: SKILL_ROWS.map(([key, icon, label]) => ({
+      key,
+      label: `${icon} ${label}`,
+      value: formatSkillLine(xp, key),
+    })),
+    spinner: `🎡 Spinner: ${fmtSpinnerReadyForSkills(spinner)} • ${unlock}`,
   };
 }
 
@@ -217,6 +285,7 @@ function readBotSummary(source) {
   const logs = listLogFiles(source.reconPath);
   const latestLogMtime = logs[0]?.mtimeMs || 0;
   const lastSeenMs = Math.max(latestMtime, latestLogMtime);
+  const spinner = buildSpinner(states);
 
   return {
     id: source.id,
@@ -227,7 +296,8 @@ function readBotSummary(source) {
     activity: activityFromState(latest, states),
     playerName: states.fishing.data?.playerName || states.combat.data?.playerName || extractPlayerName(source.reconPath) || 'Unknown player',
     levels: buildLevels(states),
-    spinner: buildSpinner(states),
+    spinner,
+    skills: buildSkillSummary(states, spinner),
     inventory: buildInventory(states),
     state: Object.fromEntries(Object.entries(states).map(([key, value]) => [key, value.data])),
     logs,
