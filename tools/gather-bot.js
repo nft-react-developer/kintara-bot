@@ -71,6 +71,7 @@ async function connectWithRetry() {
   for (let attempt = 1; ; attempt++) {
     try {
       const p = new Presence(SHARD);
+      if (cli) p.setCookie(cli.cookie);
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => {
         if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead);
