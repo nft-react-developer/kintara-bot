@@ -644,9 +644,14 @@ async function hMarket() {
   lines.push('', `🪙 $KINS: <b>${kins}</b>`, '', '<i>Choose an action — Sell (gold/$KINS) or Buy from live listings.</i>');
   mkReset();
   await tg.send(lines.join('\n'), {
-    buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }]],
+    buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }], [{ text: '📦 MY LISTINGS', data: 'mk:mine' }]],
   });
   return null;
+}
+
+function formatListingPrice(x) {
+  if (x.currency === 'token' || x.currency === 'kins') return `$${x.priceUsd ?? '?'} total ($KINS)`;
+  return `${x.priceGold ?? '?'}g total`;
 }
 
 async function mkShowInventory(ctx) {
@@ -731,11 +736,49 @@ async function mkShowBuy(ctx) {
   const lines = ['🛒 <b>BUY — Listing Live</b>', ''];
   for (const x of arr.slice(0, 12)) {
     const it = x.itemType || x.item; const lbl = ITEM_LABEL[it] || it;
-    if (x.currency === 'token' || x.currency === 'kins') lines.push(`${lbl} x${x.quantity} — <b>$${x.priceUsd ?? '?'}</b> ($KINS) • ${x.sellerName || '?'}`);
-    else lines.push(`${lbl} x${x.quantity} — <b>${x.priceGold ?? '?'}g</b> • ${x.sellerName || '?'}`);
+    lines.push(`${lbl} x${x.quantity} — <b>${formatListingPrice(x)}</b> • ${x.sellerName || '?'}`);
   }
   lines.push('', '<i>⚠️ Buying a $KINS listing requires an on-chain wallet signature — complete that in the web game. Gold listings are purchased in-game.</i>');
-  await tg.editMessage(ctx.chatId, ctx.messageId, lines.join('\n'), { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }]] });
+  await tg.editMessage(ctx.chatId, ctx.messageId, lines.join('\n'), { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }], [{ text: '📦 My Listings', data: 'mk:mine' }]] });
+}
+
+async function mkShowMine(ctx) {
+  const c = await client();
+  let arr = [];
+  try {
+    const Lst = await c.marketplaceListings({ limit: 20, mine: true });
+    arr = Lst.listings || Lst.items || Lst.data || [];
+  } catch (e) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, `⚠️ Failed to load your listings: ${e.message.slice(0, 50)}`, { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }]] });
+    return;
+  }
+  if (!arr.length) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, '📦 You have no active listings right now.', { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }], [{ text: '💰 Sell', data: 'mk:sell' }]] });
+    return;
+  }
+  const lines = ['📦 <b>My Listings</b>', ''];
+  const buttons = [];
+  for (const x of arr.slice(0, 10)) {
+    const it = x.itemType || x.item; const lbl = ITEM_LABEL[it] || it;
+    lines.push(`#${x.id} • ${lbl} x${x.quantity} — <b>${formatListingPrice(x)}</b>`);
+    buttons.push([{ text: `❌ Cancel #${x.id}`, data: `mk:cancel:${x.id}` }]);
+  }
+  buttons.push([{ text: '⬅️ Back', data: 'mk:back' }]);
+  await tg.editMessage(ctx.chatId, ctx.messageId, lines.join('\n'), { buttons });
+}
+
+async function mkCancelListing(id, ctx) {
+  const c = await client();
+  try {
+    const r = await c.marketplaceCancel(Number(id));
+    if (r && r.ok === false) {
+      await tg.editMessage(ctx.chatId, ctx.messageId, `❌ Cancel rejected: ${JSON.stringify(r).slice(0, 120)}`, { buttons: [[{ text: '⬅️ Back', data: 'mk:mine' }]] });
+      return;
+    }
+    await tg.editMessage(ctx.chatId, ctx.messageId, `✅ Listing #${id} cancelled.`, { buttons: [[{ text: '📦 Refresh My Listings', data: 'mk:mine' }], [{ text: '⬅️ Back', data: 'mk:back' }]] });
+  } catch (e) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, `❌ Cancel failed: ${(e.message || '').slice(0, 120)}`, { buttons: [[{ text: '⬅️ Back', data: 'mk:mine' }]] });
+  }
 }
 
 async function onMarketCallback(data, ctx) {
@@ -743,10 +786,12 @@ async function onMarketCallback(data, ctx) {
   const rest = data.slice(3);
   if (rest === 'sell') return mkShowInventory(ctx);
   if (rest === 'buy') return mkShowBuy(ctx);
+  if (rest === 'mine') return mkShowMine(ctx);
   if (rest === 'back') {
     mkReset();
-    return tg.editMessage(ctx.chatId, ctx.messageId, '🛍 <b>Marketplace</b> — choose an action:', { buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }]] });
+    return tg.editMessage(ctx.chatId, ctx.messageId, '🛍 <b>Marketplace</b> — choose an action:', { buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }], [{ text: '📦 MY LISTINGS', data: 'mk:mine' }]] });
   }
+  if (rest.startsWith('cancel:')) return mkCancelListing(rest.slice(7), ctx);
   if (rest.startsWith('itm:')) return mkPickCurrency(rest.slice(4), ctx);
   if (rest.startsWith('cur:')) return mkAskQtyPrice(rest.slice(4), ctx);
 }
