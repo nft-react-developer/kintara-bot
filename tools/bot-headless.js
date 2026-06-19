@@ -11,6 +11,7 @@ const { config } = require('../config');
 const { Presence } = require('../lib/presenceWs');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { login, isWalletBannedError } = require('../lib/walletAuth');
+const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
 
 const SHARD = process.argv[2] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
@@ -128,6 +129,7 @@ function saveState(extra = {}) {
 function trackAccountMeta(me) {
   if (!me || (!me.ok && !me.player && !me.backpack && !me.meta)) return;
   stats.dailySpinnerLastMs = me?.meta?.dailySpinnerLastMs ?? null;
+  if (me?.backpack) stats.inventory = pickInventorySnapshot(me.backpack);
 }
 
 async function catchOne(p) {
@@ -144,6 +146,7 @@ async function catchOne(p) {
     if (g?.ok !== false) {
       stats.ok++;
       stats.fish = g?.backpack?.fish ?? stats.fish;
+      if (g?.backpack) stats.inventory = pickInventorySnapshot(g.backpack);
       if (g?.xp) stats.skillXp = { ...stats.skillXp, ...g.xp };
       saveState();
       logThrottle('catch', `🎣 fish=${stats.fish} xp=${g?.xp?.fishing} (ok ${stats.ok}/${stats.casts})`, 20000);

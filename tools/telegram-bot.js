@@ -559,7 +559,7 @@ async function hStatus() {
       reconnect: 'reconnect',
     };
     const phaseLabel = cs.phase ? (phaseMap[cs.phase] || cs.phase) : null;
-    lines.push(`⚔️ kill ${cs.kills || 0} | 🗡️ ${cs.hits || 0} | 📈 +${cs.combatGain || 0}XP | ❤️ ${cs.hp || 0} | 🧪 ${cs.potionsHealth || 0}H/${cs.potionsShield || 0}S | 🏃 ${cs.retreats || 0}${phaseLabel ? ` | 📍 ${phaseLabel}` : ''} | ⏱ ${fmtAgeMin(cs.ageMin)}`);
+    lines.push(`⚔️ kill ${cs.kills || 0} | 🗡️ ${cs.hits || 0} | 🎒 ${cs.lootClaims || 0} | 📈 +${cs.combatGain || 0}XP | ❤️ ${cs.hp || 0} | 🧪 ${cs.potionsHealth || 0}H/${cs.potionsShield || 0}S | 🏃 ${cs.retreats || 0}${phaseLabel ? ` | 📍 ${phaseLabel}` : ''} | ⏱ ${fmtAgeMin(cs.ageMin)}`);
   }
   if (!(fr && s && isFreshState(s)) && !(gr && g && isFreshState(g, 60 * 60 * 1000)) && !(cb && cs && isFreshState(cs, 60 * 60 * 1000))) {
     lines.push('No fresh session stats yet for the currently running activity.');

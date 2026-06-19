@@ -12,6 +12,7 @@ const { Presence } = require('../lib/presenceWs');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { isWalletBannedError } = require('../lib/walletAuth');
 const gs = require('../lib/gameState');
+const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
 
 const KIND = process.argv[2] || 'tree';
 const SHARD = process.argv[3] || config.shard || 's4';
@@ -55,6 +56,7 @@ function saveState(extra = {}) {
 function trackAccountMeta(me) {
   if (!me || (!me.ok && !me.player && !me.backpack && !me.meta)) return;
   stats.dailySpinnerLastMs = me?.meta?.dailySpinnerLastMs ?? null;
+  if (me?.backpack) stats.inventory = pickInventorySnapshot(me.backpack);
 }
 
 let cli;
@@ -120,6 +122,7 @@ async function persistLoot(loot, yld = 1) {
     bp[loot] = (Number(bp[loot]) || 0) + yld;
     const r = await gs.pushBackpack(cli, bp, st.stateSeq, []);
     stats[loot] = r?.backpack?.[loot] ?? stats[loot];
+    if (r?.backpack) stats.inventory = pickInventorySnapshot(r.backpack);
     if (loot === 'wood') stats.gainedWood += yld;
     if (loot === 'stone') stats.gainedStone += yld;
     if (loot === 'coal') stats.gainedCoal += yld;

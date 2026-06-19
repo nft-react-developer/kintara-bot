@@ -17,6 +17,7 @@ const cp = require('child_process');
 const { config } = require('../config');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { isWalletBannedError } = require('../lib/walletAuth');
+const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
 const tg = require('../lib/telegram');
 
 const ROOT = path.join(__dirname, '..');
@@ -165,6 +166,7 @@ async function decide() {
       skillXp: xp,
       avg: st.avg,
       dailySpinnerLastMs: me?.meta?.dailySpinnerLastMs ?? null,
+      inventory: pickInventorySnapshot(bp),
     },
   };
 }

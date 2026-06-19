@@ -20,6 +20,7 @@ const { Presence } = require('../lib/presenceWs');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { isWalletBannedError } = require('../lib/walletAuth');
 const bank = require('../lib/bank');
+const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
 
 const SHARD = process.argv[2] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
@@ -62,7 +63,7 @@ const stats = {
   kills: 0, hits: 0, combatStart: null, combatNow: null, combatGain: 0,
   potionsHealth: 0, potionsShield: 0, retreats: 0, deaths: 0, reconnects: 0,
   hp: 100, region: 'world', phase: 'boot', queueAhead: null, started: Date.now(),
-  skillXp: {},
+  skillXp: {}, lootScans: 0, lootClaims: 0, lootErrors: 0,
 };
 function saveState(extra = {}) {
   try { fs.writeFileSync(STATEFILE, JSON.stringify({ ...stats, ...extra, ageMin: Math.round((Date.now() - stats.started) / 60000) }, null, 2)); } catch {}
@@ -70,9 +71,10 @@ function saveState(extra = {}) {
 function trackAccountMeta(me) {
   if (!me || (!me.ok && !me.player && !me.backpack && !me.meta)) return;
   stats.dailySpinnerLastMs = me?.meta?.dailySpinnerLastMs ?? null;
+  if (me?.backpack) stats.inventory = pickInventorySnapshot(me.backpack);
 }
 
-let cli;
+let cli, currentPlayer;
 async function createClientWithRetry() {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -264,6 +266,169 @@ async function retreatToSafe(p) {
   return 'recovered';
 }
 
+function shardNumber(shard = SHARD) {
+  const m = String(shard || '').match(/\d+/);
+  return m ? Number(m[0]) : shard;
+}
+
+function asArrayPayload(payload) {
+  if (Array.isArray(payload)) return payload;
+  for (const key of ['bags', 'groundBags', 'items', 'loot', 'data']) {
+    if (Array.isArray(payload?.[key])) return payload[key];
+  }
+  return [];
+}
+
+function bagIdOf(bag) {
+  return bag?.bagId ?? bag?.id ?? bag?._id ?? bag?.uuid ?? null;
+}
+
+function bagOwnerOf(bag) {
+  return bag?.ownerId ?? bag?.owner ?? bag?.playerId ?? bag?.victimId ?? bag?.pid ?? bag?.by ?? null;
+}
+
+function bagWorldPos(bag) {
+  const x = Number(bag?.x ?? bag?.px);
+  const z = Number(bag?.z ?? bag?.pz);
+  if (Number.isFinite(x) && Number.isFinite(z)) return { x, z };
+  const col = Number(bag?.col ?? bag?.c);
+  const row = Number(bag?.row ?? bag?.r);
+  if (Number.isFinite(col) && Number.isFinite(row)) return wildWorld(col, row);
+  return null;
+}
+
+function bagDistance(p, bag) {
+  const pos = bagWorldPos(bag);
+  if (!pos) return null;
+  return Math.hypot(pos.x - p.pos.x, pos.z - p.pos.z);
+}
+
+function currentWildTile(p) {
+  if (typeof p.wildTile === 'function') return p.wildTile();
+  return {
+    col: Math.round(p.pos.x - WILD_OFF),
+    row: Math.round(p.pos.z - WILD_OFF),
+  };
+}
+
+function lootBagPayload(p, bag) {
+  const tile = currentWildTile(p);
+  const region = String(p.region || 'wild');
+  return {
+    bagId: String(bagIdOf(bag)),
+    shard: shardNumber(p.shard),
+    col: tile.col | 0,
+    row: tile.row | 0,
+    realm: region === 'wild_exp' ? 'wild_exp' : region === 'wild_ext' ? 'wild_ext' : 'wild',
+    takeAll: true,
+  };
+}
+
+function lootErrorOf(result) {
+  return result?.error || result?.body?.error || result?.message || 'unknown';
+}
+
+function lootStatusOf(result) {
+  return result?.status || result?.body?.status || 'n/a';
+}
+
+function itemSummary(items) {
+  if (!Array.isArray(items) || !items.length) return 'empty';
+  return items
+    .slice(0, 8)
+    .map((item) => `${item?.t || item?.type || '?'}x${Number(item?.n ?? item?.qty ?? 1) || 1}`)
+    .join(', ');
+}
+
+function bagSummary(p, bag) {
+  const pos = bagWorldPos(bag);
+  const dist = bagDistance(p, bag);
+  return [
+    `id=${bagIdOf(bag) ?? '?'}`,
+    `owner=${bagOwnerOf(bag) ?? '?'}`,
+    `region=${bag?.region ?? '?'}`,
+    `shard=${bag?.shardId ?? '?'}`,
+    `col=${bag?.col ?? '?'}`,
+    `row=${bag?.row ?? '?'}`,
+    pos ? `pos=${pos.x.toFixed(1)},${pos.z.toFixed(1)}` : 'pos=?',
+    dist == null ? 'dist=?' : `dist=${dist.toFixed(2)}`,
+    `items=${itemSummary(bag?.items)}`,
+  ].join(' ');
+}
+
+function lootSkipReason(p, bag) {
+  const id = bagIdOf(bag);
+  if (id == null) return 'missing_id';
+  if (bag?.region && !/^wild/.test(String(bag.region))) return 'wrong_region';
+  if (bag?.shardId != null && Number(bag.shardId) !== Number(shardNumber(p.shard))) return 'wrong_shard';
+  const owner = bagOwnerOf(bag);
+  if (owner != null && p.myId != null && Number(owner) !== Number(p.myId)) return 'wrong_owner';
+  const dist = bagDistance(p, bag);
+  if (dist != null && dist > 8) return 'too_far';
+  return null;
+}
+
+function isLootCandidate(p, bag) {
+  return lootSkipReason(p, bag) == null;
+}
+
+async function collectNearbyLoot(p, reason = 'scan') {
+  if (!/^wild/.test(p.region)) return 0;
+  stats.lootScans++;
+  try {
+    const res = await cli.groundBags(shardNumber(p.shard));
+    const allBags = asArrayPayload(res);
+    const bags = [];
+    const skipped = {};
+    for (const bag of allBags) {
+      const skipReason = lootSkipReason(p, bag);
+      if (skipReason) {
+        skipped[skipReason] = (skipped[skipReason] || 0) + 1;
+      } else {
+        bags.push(bag);
+      }
+    }
+    const tile = currentWildTile(p);
+    const skipText = Object.entries(skipped).map(([k, v]) => `${k}=${v}`).join(' ') || 'none';
+    log(`🎒 loot scan ${reason}: raw=${allBags.length} candidates=${bags.length} skipped=${skipText} me=${p.myId ?? '?'} shard=${shardNumber(p.shard)} region=${p.region} tile=${tile.col},${tile.row} pos=${p.pos.x.toFixed(1)},${p.pos.z.toFixed(1)} hp=${p.hp}`);
+    let claimed = 0;
+    bags.sort((a, b) => (bagDistance(p, a) ?? 999) - (bagDistance(p, b) ?? 999));
+    for (const bag of bags.slice(0, 5)) {
+      if (p.hp <= RETREAT_HP) break;
+      const id = bagIdOf(bag);
+      const pos = bagWorldPos(bag);
+      const dist = bagDistance(p, bag);
+      log(`🎒 loot candidate: ${bagSummary(p, bag)}`);
+      if (pos && dist != null && dist > 1.5) {
+        log(`🎒 walking to bag ${id}: from=${p.pos.x.toFixed(1)},${p.pos.z.toFixed(1)} to=${pos.x.toFixed(1)},${pos.z.toFixed(1)} dist=${dist.toFixed(2)}`);
+        await p.walkTo(pos.x, pos.z, { maxSec: 6, until: () => p.hp <= RETREAT_HP });
+        await sleep(250);
+        if (p.hp <= RETREAT_HP) break;
+      }
+      const payload = lootBagPayload(p, bag);
+      log(`🎒 loot request ${id}: ${JSON.stringify(payload)}`);
+      const r = await cli.lootBag(payload).catch((e) => ({ ok: false, status: e.status, error: e.message, body: e.body }));
+      if (r && r.ok !== false && !r.error) {
+        claimed++;
+        stats.lootClaims++;
+        if (r.backpack) stats.inventory = pickInventorySnapshot(r.backpack);
+        log(`🎒 loot success ${id}: partial=${Boolean(r.partial)} removed=${r.bag == null} backpack=${Boolean(r.backpack)} remaining=${itemSummary(r?.bag?.items)}`);
+        await sleep(350);
+      } else {
+        stats.lootErrors++;
+        log(`🎒 loot rejected ${id}: status=${lootStatusOf(r)} error=${String(lootErrorOf(r)).slice(0, 120)} body=${JSON.stringify(r?.body || {}).slice(0, 240)}`);
+      }
+    }
+    if (claimed) saveState();
+    return claimed;
+  } catch (e) {
+    stats.lootErrors++;
+    logT('looterr', `loot scan err: ${String(e.message || e).slice(0, 60)}`, 15000);
+    saveState();
+    return 0;
+  }
+}
+
 async function huntLoop(p) {
   // wait for the hub to spawn mobs (wildMobs in snap)
   log('waiting for wildMobs from hub...');
@@ -278,10 +443,15 @@ async function huntLoop(p) {
   saveState();
   log(`🧟 ${aliveCount} live mobs detected. Starting hunt.`);
 
+  let nextLootScanAt = 0;
   while (p.ready && /^wild/.test(p.region)) {
     const sv = await survivalCheck(p);
     if (sv === 'dead') return 'dead';
     if (sv === 'retreat') { const r = await retreatToSafe(p); if (r === 'exited') return 'exited'; continue; }
+    if (Date.now() >= nextLootScanAt) {
+      await collectNearbyLoot(p, 'periodic');
+      nextLootScanAt = Date.now() + 10000;
+    }
 
     const target = p.nearestMob();
     if (!target) { logT('nomob', 'no live mobs, waiting for respawn...'); await sleep(3000); continue; }
@@ -316,7 +486,8 @@ async function huntLoop(p) {
     // check whether it died (lv becomes 0 / alive false after snap)
     await sleep(600);
     const after = p.wildMobs[target.i];
-    if (after && !after.alive && stats.kills === startKills) { /* kill di-handle event wm_kill */ }
+    if (after && !after.alive && stats.kills === startKills) { /* kill is handled by wm_kill event */ }
+    if (stats.kills > startKills || (after && !after.alive)) await collectNearbyLoot(p, 'post-kill');
     saveState();
     await sleep(400);
   }
@@ -327,7 +498,7 @@ async function connectWithRetry() {
   for (let attempt = 1; ; attempt++) {
     try {
       const p = new Presence(SHARD);
-      if (cli) p.setCookie(cli.cookie);
+      if (cli) p.setCookie(cli.cookie, currentPlayer);
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => {
         stats.phase = (stats.hp | 0) <= 0 && stats.deaths > 0 ? 'requeue_after_death' : 'queue';
@@ -390,6 +561,7 @@ async function connectWithRetry() {
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
   const { client: c, player } = await createClientWithRetry();
   cli = c;
+  currentPlayer = player;
   saveState();
   log('COMBAT BOT START pid=' + player?.id + ' shard=' + SHARD);
 

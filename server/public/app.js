@@ -65,6 +65,13 @@ const STATUS_TOOLTIPS = {
   Offline: 'Offline means recon data exists, but it has not changed for more than 30 minutes.',
   Missing: 'Missing means the recon folder is not mounted or cannot be found.',
 };
+const INVENTORY_LABELS = {
+  cookedFish: 'cooked fish',
+  pets: 'pets',
+  cosmetics: 'cosmetics',
+  mounts: 'mounts',
+  furniture: 'furniture',
+};
 
 function metricLabel(label) {
   const tooltip = STATUS_TOOLTIPS[label];
@@ -74,6 +81,10 @@ function metricLabel(label) {
       ${esc(label)}
       <span class="info-icon" tabindex="0" aria-label="${esc(label)} status help" data-tooltip="${esc(tooltip)}">i</span>
     </span>`;
+}
+
+function inventoryLabel(key) {
+  return INVENTORY_LABELS[key] || key;
 }
 
 function renderSummary(summary) {
@@ -90,7 +101,7 @@ function renderBots(bots) {
   $('bots').innerHTML = bots.map((bot) => {
     const items = Object.entries(bot.inventory || {})
       .filter(([, value]) => value !== null && value !== undefined)
-      .map(([key, value]) => `<span class="item">${esc(key)}: ${esc(value)}</span>`)
+      .map(([key, value]) => `<span class="item">${esc(inventoryLabel(key))}: ${esc(value)}</span>`)
       .join('');
     return `
       <article class="card">

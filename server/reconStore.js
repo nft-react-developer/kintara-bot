@@ -37,6 +37,12 @@ const SKILL_ROWS = [
   ['cooking', '🍳', 'cooking'],
   ['smithing', '🔨', 'smithing'],
 ];
+const INVENTORY_CATEGORY_SLOTS = [
+  ['pets', 'petSlots'],
+  ['cosmetics', 'cosmeticSlots'],
+  ['mounts', 'mountSlots'],
+  ['furniture', 'furnitureSlots'],
+];
 
 function safeStat(filePath) {
   try { return fs.statSync(filePath); } catch { return null; }
@@ -89,7 +95,8 @@ function buildInventory(states) {
   const snapshot = states.orchestrator.data?.snapshot || {};
   const fishing = states.fishing.data || {};
   const gather = states.gather.data || {};
-  return {
+  const inventorySnapshot = pickLatestInventorySnapshot(states);
+  const inventory = {
     gold: snapshot.gold ?? null,
     fish: fishing.fish ?? snapshot.fish ?? null,
     cookedFish: fishing.cooked ?? snapshot.cooked_fish_meat ?? null,
@@ -98,6 +105,39 @@ function buildInventory(states) {
     coal: gather.coal ?? snapshot.coal ?? null,
     metal: gather.metal ?? snapshot.metal ?? null,
   };
+  for (const [label, slotKey] of INVENTORY_CATEGORY_SLOTS) {
+    inventory[label] = formatSlotCategory(inventorySnapshot?.[slotKey]);
+  }
+  return inventory;
+}
+
+function pickLatestInventorySnapshot(states) {
+  return [
+    [states.orchestrator.data?.snapshot?.inventory, states.orchestrator.mtimeMs],
+    [states.fishing.data?.inventory, states.fishing.mtimeMs],
+    [states.gather.data?.inventory, states.gather.mtimeMs],
+    [states.combat.data?.inventory, states.combat.mtimeMs],
+  ]
+    .filter(([inventory]) => inventory && typeof inventory === 'object')
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+}
+
+function slotItemLabel(slot) {
+  if (!slot) return '';
+  if (typeof slot !== 'object') return String(slot);
+  const type = slot.t || slot.type || slot.itemType || slot.id || slot.name || '?';
+  const qty = Number(slot.n ?? slot.qty ?? slot.count ?? 1) || 1;
+  return qty > 1 ? `${type} x${qty}` : String(type);
+}
+
+function formatSlotCategory(slots) {
+  if (!Array.isArray(slots)) return null;
+  const filled = slots.filter(Boolean);
+  if (!filled.length) return `0/${slots.length}`;
+  const labels = filled.map(slotItemLabel).filter(Boolean);
+  const preview = labels.slice(0, 5).join(', ');
+  const suffix = labels.length > 5 ? ` +${labels.length - 5} more` : '';
+  return `${filled.length}/${slots.length}: ${preview}${suffix}`;
 }
 
 function buildLevels(states) {
