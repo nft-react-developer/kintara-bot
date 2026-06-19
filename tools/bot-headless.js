@@ -14,6 +14,8 @@ const { login, isWalletBannedError } = require('../lib/walletAuth');
 
 const SHARD = process.argv[2] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
+const PIDFILE = path.join(OUT, 'control', 'fishbot.pid');
+const STATEFILE = path.join(OUT, 'bot-state.json');
 const log = (...a) => { const s = `[${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}`; console.log(s); fs.appendFileSync(path.join(OUT, 'bot.log'), s + '\n'); };
 const _thr = {};
 const logThrottle = (key, msg, everyMs = 30000) => { const now = Date.now(); if (!_thr[key] || now - _thr[key] > everyMs) { _thr[key] = now; log(msg); } };
@@ -21,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PORTAL = { x: 61 - 30.5, z: 31 - 30.5 }; // mainland east -> pond
 
 let cli, auth;
-const stats = { fish: 0, casts: 0, ok: 0, cooked: 0, sold: 0, rate: 0, reconnects: 0, started: Date.now() };
+const stats = { fish: 0, casts: 0, ok: 0, cooked: 0, sold: 0, rate: 0, reconnects: 0, started: Date.now(), shard: SHARD, region: 'world', phase: 'boot', queueAhead: null };
 
 async function freshAuth() { const r = await KintaraClient.create(); cli = r.client; auth = { cookie: cli.cookie, player: r.player }; return auth; }
 
@@ -30,8 +32,18 @@ async function connectWithRetry() {
     try {
       const p = new Presence(SHARD);
       p.on('log', (m) => log('[ws] ' + m));
-      p.on('queue', (d) => { if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead); });
+      p.on('queue', (d) => {
+        stats.phase = 'queue';
+        stats.queueAhead = Number.isFinite(Number(d?.ahead)) ? Number(d.ahead) : null;
+        stats.region = p.region;
+        saveState();
+        if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead);
+      });
       await p.connect();
+      stats.phase = 'presence';
+      stats.queueAhead = null;
+      stats.region = p.region;
+      saveState();
       log('✅ presence live, region=' + p.region);
       return p;
     } catch (e) {
@@ -45,6 +57,9 @@ async function connectWithRetry() {
 
 async function gotoPond(p) {
   if (p.region === 'pond') return true;
+  stats.phase = 'travel_pond';
+  stats.region = p.region;
+  saveState();
   log('walk -> portal east');
   await p.walkTo(PORTAL.x, PORTAL.z, { until: () => p.region === 'pond', maxSec: 30 });
   await sleep(1500);
@@ -55,6 +70,10 @@ async function gotoPond(p) {
     await p.walkTo(-11.5, 0, { maxSec: 12 });
     log('di pond, tile=' + JSON.stringify(p.pondTile()));
   }
+  stats.phase = p.region === 'pond' ? 'pond' : 'travel_pond';
+  stats.queueAhead = null;
+  stats.region = p.region;
+  saveState();
   log('region=' + p.region);
   return p.region === 'pond';
 }
@@ -67,9 +86,16 @@ const FISH_RESERVE = 50, SELL_FISH_AT = 160; // jual ikan kalau >160, sisakan 50
 const COOKED_RESERVE = 40, SELL_COOKED_AT = 90; // simpan 40 cooked utk healing/upgrade
 let fishPrice = 1;
 
-function saveState(region) { fs.writeFileSync(path.join(OUT, 'bot-state.json'), JSON.stringify({ ...stats, region, ageMin: Math.round((Date.now() - stats.started) / 60000) })); }
+function saveState(extra = {}) {
+  try {
+    fs.writeFileSync(STATEFILE, JSON.stringify({ ...stats, ...extra, ageMin: Math.round((Date.now() - stats.started) / 60000), updatedAt: Date.now() }));
+  } catch {}
+}
 
 async function catchOne(p) {
+  stats.phase = 'fishing';
+  stats.region = p.region;
+  saveState();
   const me = p.pondTile();
   const fc = me.col + 3, fr = me.row;
   p.setFishing(fc, fr, 0); await sleep(900);
@@ -77,13 +103,14 @@ async function catchOne(p) {
   p.setFishing(fc, fr, 2); await sleep(1600);
   try {
     const g = await cli.grantFishXp({}); p.clearAct(); stats.casts++;
-    if (g?.ok !== false) { stats.ok++; stats.fish = g?.backpack?.fish ?? stats.fish; logThrottle('catch', `🎣 fish=${stats.fish} xp=${g?.xp?.fishing} (ok ${stats.ok}/${stats.casts})`, 20000); }
+    if (g?.ok !== false) { stats.ok++; stats.fish = g?.backpack?.fish ?? stats.fish; saveState(); logThrottle('catch', `🎣 fish=${stats.fish} xp=${g?.xp?.fishing} (ok ${stats.ok}/${stats.casts})`, 20000); }
   } catch (e) {
     p.clearAct(); const m = e.message || '';
     if (/rate_limited/.test(m)) stats.rate++;
     else if (/not_in_pond/.test(m)) { p.region = 'world'; logThrottle('kicked', 'kicked -> re-goto'); }
     else if (/502|Non-JSON/.test(m)) logThrottle('502', '502 transient');
     else logThrottle('ferr:' + m.slice(0, 20), 'fish err: ' + m.slice(0, 50));
+    saveState({ region: p.region });
   }
 }
 
@@ -121,7 +148,7 @@ async function fishLoop(p) {
   while (p.ready) {
     if (p.region !== 'pond') { if (!await gotoPond(p)) { await sleep(3000); continue; } }
     await catchOne(p);
-    saveState(p.region);
+    saveState({ region: p.region });
     await sleep(5500);
     if (++sinceManage >= 12) { // tiap ~12 catch, kelola inventory
       sinceManage = 0;
@@ -138,16 +165,29 @@ async function fishLoop(p) {
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
+  fs.mkdirSync(path.join(OUT, 'control'), { recursive: true });
   fs.writeFileSync(path.join(OUT, 'bot.log'), '');
+  fs.writeFileSync(PIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() }));
+  process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
   await freshAuth();
   const me0 = await cli.me().catch(() => ({}));
   log('BOT START pid=' + auth.player?.id + ' fish0=' + me0?.backpack?.fish);
   stats.fish = me0?.backpack?.fish || 0;
+  saveState();
 
   for (;;) { // supervisor: reconnect selamanya
     const p = await connectWithRetry();
     let closed = false;
-    p.on('close', () => { if (!closed) { closed = true; stats.reconnects++; log('⚠️ presence closed -> reconnect'); } });
+    p.on('close', () => {
+      if (!closed) {
+        closed = true;
+        stats.reconnects++;
+        stats.phase = 'reconnect';
+        stats.queueAhead = null;
+        saveState();
+        log('⚠️ presence closed -> reconnect');
+      }
+    });
     await sleep(2000);
     await gotoPond(p);
     await fishLoop(p); // keluar saat p.ready=false (disconnect)

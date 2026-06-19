@@ -481,7 +481,19 @@ async function hStatus() {
   const cs = readJson(path.join(OUT, 'combat-state.json'));
   lines.push('');
   lines.push('📦 <b>Session</b>');
-  if (fr && s && isFreshState(s)) lines.push(`🎣 fish ${s.ok || 0}/${s.casts || 0} | 🎒 ${s.fish || 0} | 🍳 ${s.cooked || 0} | 💰 ${s.sold || 0} | ⏱ ${fmtAgeMin(s.ageMin)}`);
+  if (fr && s && isFreshState(s)) {
+    const fishPhaseMap = {
+      boot: 'boot',
+      queue: s.queueAhead != null ? `queue ${s.queueAhead}` : 'queue',
+      presence: 'presence',
+      travel_pond: 'travel pond',
+      pond: 'pond',
+      fishing: 'fishing',
+      reconnect: 'reconnect',
+    };
+    const fishPhase = s.phase ? (fishPhaseMap[s.phase] || s.phase) : null;
+    lines.push(`🎣 fish ${s.ok || 0}/${s.casts || 0} | 🎒 ${s.fish || 0} | 🍳 ${s.cooked || 0} | 💰 ${s.sold || 0}${fishPhase ? ` | 📍 ${fishPhase}` : ''} | ⏱ ${fmtAgeMin(s.ageMin)}`);
+  }
   if (gr && g && isFreshState(g, 60 * 60 * 1000)) {
     const phaseLabel = g.phase === 'queue'
       ? (g.queueAhead != null ? `queue ${g.queueAhead}` : 'queue')
