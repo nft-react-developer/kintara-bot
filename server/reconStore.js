@@ -135,16 +135,16 @@ function formatSkillLine(xpBySkill, key) {
 }
 
 function fmtSpinnerReadyForSkills(spinner) {
-  if (!spinner) return 'status ?';
-  if (spinner.status === 'ready') return '✅ FREE SPIN READY — type /spinner';
+  if (!spinner) return '⏳ Not ready';
+  if (spinner.status === 'ready') return '✅ Ready';
   if (spinner.status === 'waiting') {
     const left = Math.max(0, Number(spinner.remainingMs) || 0);
     const h = Math.floor(left / 3600000);
     const m = Math.round((left % 3600000) / 60000);
-    return `⏳ ready in ${h}h ${m}m`;
+    return `⏳ Ready in ${h}h ${m}m`;
   }
-  if (spinner.status === 'locked') return spinner.label || 'locked';
-  return 'status ?';
+  if (spinner.status === 'locked') return '🔒 Locked';
+  return '⏳ Not ready';
 }
 
 function buildSkillSummary(states, spinner) {
@@ -152,7 +152,6 @@ function buildSkillSummary(states, spinner) {
   const snapshot = states.orchestrator.data?.snapshot || {};
   const avg = Number.isFinite(Number(snapshot.avg)) ? Number(snapshot.avg) : averageLevelFloor(xp);
   const avgPrecise = preciseAverageLevel(xp).toFixed(2);
-  const unlock = avg >= 5 ? '✅ spinner unlocked' : `🔒 spinner requires avg 5 (now ${avg})`;
   return {
     level: `avg lvl ${avg} • precise ${avgPrecise}`,
     rows: SKILL_ROWS.map(([key, icon, label]) => ({
@@ -160,7 +159,7 @@ function buildSkillSummary(states, spinner) {
       label: `${icon} ${label}`,
       value: formatSkillLine(xp, key),
     })),
-    spinner: `🎡 Spinner: ${fmtSpinnerReadyForSkills(spinner)} • ${unlock}`,
+    spinner: fmtSpinnerReadyForSkills(spinner),
   };
 }
 

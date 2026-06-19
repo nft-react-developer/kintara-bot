@@ -40,6 +40,10 @@ function spinnerText(spinner) {
   return spinner.label || 'Unknown';
 }
 
+function spinnerTone(spinner) {
+  return spinner?.status === 'ready' ? 'ready' : 'waiting';
+}
+
 function skillRows(bot) {
   const rows = Array.isArray(bot.skills?.rows) ? bot.skills.rows : [];
   if (rows.length) {
@@ -99,7 +103,7 @@ function renderBots(bots) {
           <span>Activity</span><b>${esc(valueOrDash(bot.activity))}</b>
           <span>📊 Level</span><b>${esc(valueOrDash(bot.skills?.level || bot.levels?.avg))}</b>
           ${skillRows(bot)}
-          <span>Spinner</span><b><span class="spinner ${esc(bot.spinner?.status || 'unknown')}">${esc(valueOrDash(bot.skills?.spinner || spinnerText(bot.spinner)))}</span></b>
+          <span>Spinner</span><b><span class="spinner ${esc(spinnerTone(bot.spinner))}">${esc(valueOrDash(bot.skills?.spinner || spinnerText(bot.spinner)))}</span></b>
         </div>
         <div class="items">${items || '<span class="muted">No item state yet</span>'}</div>
       </article>`;
