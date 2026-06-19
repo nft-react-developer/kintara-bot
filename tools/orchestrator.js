@@ -96,7 +96,11 @@ async function pickShard() {
     const list = (r.servers || []).filter((x) => x && x.id != null);
     const eligible = bypass ? list : list.filter((x) => Number(x.id) >= ORCH_MIN_SHARD);
     const ranked = (eligible.length ? eligible : list)
-      .sort((a, b) => (Number(a.queueLength || 0) - Number(b.queueLength || 0)) || (a.full === b.full ? 0 : a.full ? 1 : -1));
+      .sort((a, b) => {
+        const aFull = !!a.full, bFull = !!b.full;
+        if (aFull !== bFull) return aFull ? 1 : -1;
+        return (Number(a.queueLength || 0) - Number(b.queueLength || 0));
+      });
     if (!bypass) {
       for (const sv of ranked) {
         let ok = null;

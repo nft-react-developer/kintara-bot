@@ -50,6 +50,7 @@ async function connectWithRetry() {
   for (let attempt = 1; ; attempt++) {
     try {
       const p = new Presence(SHARD);
+      p.setCookie(cli.cookie, auth.player);
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => {
         stats.phase = 'queue';
@@ -83,7 +84,7 @@ async function connectWithRetry() {
       stats.queueAhead = null;
       saveState();
       await sleep(waitMs);
-      if (attempt % 3 === 0) { try { await freshAuth(); log('re-auth cookie'); } catch {} }
+      if (attempt % 5 === 0) { try { await freshAuth(); log('re-auth cookie'); } catch {} }
     }
   }
 }

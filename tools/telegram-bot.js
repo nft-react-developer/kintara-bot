@@ -79,8 +79,13 @@ async function pickBestShard(force = false) {
     // FLOOR: buang s1..s(MIN_SHARD-1) kecuali bypass.
     const eligible = bypass ? list : list.filter((x) => Number(x.id) >= MIN_SHARD);
     const base = eligible.length ? eligible : list;
-    // sort by lowest queue and then non-full -> probe the most attractive gates first.
-    const ranked = [...base].sort((a, b) => (Number(a.queueLength || 0) - Number(b.queueLength || 0)) || (a.full === b.full ? 0 : a.full ? 1 : -1));
+    // prefer non-full dulu, lalu queue terkecil. Server full+queue=0 = anomaly,
+    // taruh setelah non-full tapi sebelum full+queue>0.
+    const ranked = [...base].sort((a, b) => {
+      const aFull = !!a.full, bFull = !!b.full;
+      if (aFull !== bFull) return aFull ? 1 : -1;
+      return (Number(a.queueLength || 0) - Number(b.queueLength || 0));
+    });
     if (bypass) {
       const shard0 = 's' + ranked[0].id;
       _bestShardCache = { ts: Date.now(), shard: shard0 };
@@ -255,6 +260,18 @@ function syncDesiredFromLive() {
       dirty = true;
       Object.keys(state).forEach((k) => delete state[k]);
       Object.assign(state, normalized);
+    }
+  }
+  // Kalau state masih kosong dan tidak ada proses jalan, biarkan idle (user start manual).
+  // Tapi kalau ada proses orphan yang jalan tanpa desired state, adopt mereka.
+  if (!dirty && Object.keys(state).length === 0) {
+    const live = liveMainService();
+    if (live) {
+      if (live === 'auto') state.auto = { updatedAt: Date.now() };
+      else if (live === 'fish') state.fish = { updatedAt: Date.now() };
+      else if (live === 'gather') state.gather = { kind: readJson(GPIDFILE)?.kind || 'all', updatedAt: Date.now() };
+      else if (live === 'combat') state.combat = { updatedAt: Date.now() };
+      dirty = true;
     }
   }
   if (dirty) saveAutoreviveState(normalizeDesiredState(state));

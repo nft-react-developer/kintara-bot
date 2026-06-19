@@ -320,6 +320,7 @@ async function connectWithRetry() {
   for (let attempt = 1; ; attempt++) {
     try {
       const p = new Presence(SHARD);
+      if (cli) p.setCookie(cli.cookie);
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => {
         stats.phase = (stats.hp | 0) <= 0 && stats.deaths > 0 ? 'requeue_after_death' : 'queue';
