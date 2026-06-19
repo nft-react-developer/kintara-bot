@@ -28,6 +28,9 @@ const STATEFILE = path.join(OUT, 'combat-state.json');
 const LOGFILE = path.join(OUT, 'combat.log');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const retryDelayMs = (attempt, base = 5000, cap = 60000) => Math.min(cap, base * (2 ** Math.max(0, attempt - 1))) + Math.floor(Math.random() * 1500);
+const TRANSIENT_FAILOVER_AFTER = 5;
+const isTransientGatewayErr = (msg) => /503|Unexpected token '<'|<!doctype|Non-JSON|presence ws err/i.test(String(msg || ''));
 const log = (...a) => { const s = `[${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}`; console.log(s); try { fs.appendFileSync(LOGFILE, s + '\n'); } catch {} };
 const lt = {}; const logT = (k, m, ms = 30000) => { const n = Date.now(); if (!lt[k] || n - lt[k] > ms) { lt[k] = n; log(m); } };
 
@@ -69,6 +72,21 @@ function trackAccountMeta(me) {
 }
 
 let cli;
+async function createClientWithRetry() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await KintaraClient.create();
+    } catch (e) {
+      if (isWalletBannedError(e)) throw e;
+      const waitMs = retryDelayMs(attempt);
+      stats.phase = 'bootstrap_retry';
+      stats.queueAhead = null;
+      saveState();
+      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs);
+    }
+  }
+}
 let healthLeft = 0, shieldLeft = 0;   // diisi dari backpack saat start (server authoritative)
 let lastPotionAt = 0;
 let mats = { gold: 0, wood: 0, stone: 0, coal: 0, metal: 0 };
@@ -166,7 +184,13 @@ async function tryPotion(p, type) {
 async function survivalCheck(p) {
   const hp = p.hp | 0;
   stats.hp = hp;
-  if (hp <= 0) { stats.deaths++; log('💀 HP 0 — died (loot already banked = safe)'); return 'dead'; }
+  if (hp <= 0) {
+    stats.deaths++;
+    stats.phase = 'dead';
+    saveState();
+    log('💀 HP 0 — died (loot already banked = safe)');
+    return 'dead';
+  }
   // kritis: bail ke safe camp
   if (hp <= RETREAT_HP) {
     if (healthLeft <= 0 && shieldLeft <= 0) { log(`🩸 HP ${hp} kritis & potion habis — RETREAT+EXIT`); return 'retreat'; }
@@ -249,8 +273,8 @@ async function huntLoop(p) {
 
   while (p.ready && /^wild/.test(p.region)) {
     const sv = await survivalCheck(p);
-    if (sv === 'dead') return;
-    if (sv === 'retreat') { const r = await retreatToSafe(p); if (r === 'exited') return; continue; }
+    if (sv === 'dead') return 'dead';
+    if (sv === 'retreat') { const r = await retreatToSafe(p); if (r === 'exited') return 'exited'; continue; }
 
     const target = p.nearestMob();
     if (!target) { logT('nomob', 'gak ada mob hidup, nunggu respawn...'); await sleep(3000); continue; }
@@ -292,12 +316,13 @@ async function huntLoop(p) {
 }
 
 async function connectWithRetry() {
+  let transientGatewayFails = 0;
   for (let attempt = 1; ; attempt++) {
     try {
       const p = new Presence(SHARD);
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => {
-        stats.phase = 'queue';
+        stats.phase = (stats.hp | 0) <= 0 && stats.deaths > 0 ? 'requeue_after_death' : 'queue';
         stats.queueAhead = Number.isFinite(Number(d?.ahead)) ? Number(d.ahead) : null;
         saveState();
         if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead);
@@ -321,6 +346,7 @@ async function connectWithRetry() {
       });
       p.on('hp', (hp) => { stats.hp = hp; saveState(); });
       await p.connect();
+      transientGatewayFails = 0;
       stats.phase = 'presence';
       stats.region = p.region;
       stats.queueAhead = null;
@@ -329,8 +355,21 @@ async function connectWithRetry() {
       return p;
     } catch (e) {
       if (isWalletBannedError(e)) throw e;
-      log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 60)} — retry 15s`);
-      await sleep(15000);
+      if (isTransientGatewayErr(e.message)) transientGatewayFails++;
+      else transientGatewayFails = 0;
+      if (transientGatewayFails >= TRANSIENT_FAILOVER_AFTER) {
+        stats.phase = 'failover_restart';
+        stats.queueAhead = null;
+        saveState();
+        log(`♻️ shard failover after ${transientGatewayFails} transient gateway errors`);
+        throw new Error('transient_presence_failover');
+      }
+      const waitMs = retryDelayMs(attempt);
+      stats.phase = 'reconnect_wait';
+      stats.queueAhead = null;
+      saveState();
+      log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 60)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs);
     }
   }
 }
@@ -340,17 +379,26 @@ async function connectWithRetry() {
   try { fs.writeFileSync(LOGFILE, ''); } catch {}
   try { fs.mkdirSync(path.dirname(PIDFILE), { recursive: true }); fs.writeFileSync(PIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() })); } catch {}
   process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
-  const { client: c, player } = await KintaraClient.create();
+  const { client: c, player } = await createClientWithRetry();
   cli = c;
   saveState();
   log('COMBAT BOT START pid=' + player?.id + ' shard=' + SHARD);
 
   for (;;) {
     const p = await connectWithRetry();
-    p.on('close', () => { stats.reconnects++; stats.phase = 'reconnect'; saveState(); log('⚠️ presence closed -> reconnect'); });
+    let expectedClose = false;
+    p.on('close', () => {
+      if (expectedClose) return;
+      stats.reconnects++;
+      stats.phase = 'reconnect';
+      saveState();
+      log('⚠️ presence closed -> reconnect');
+    });
     p.hp = 100; p.shield = 0;
     stats.phase = 'prep';
     stats.region = p.region;
+    stats.hp = 100;
+    stats.queueAhead = null;
     saveState();
     await sleep(2000);
 
@@ -374,11 +422,26 @@ async function connectWithRetry() {
     if (!entered) { log('🛑 gagal masuk wild — reconnect'); try { p.close(); } catch {} await sleep(5000); continue; }
 
     // === HUNT ===
-    try { await huntLoop(p); }
+    let outcome = null;
+    try { outcome = await huntLoop(p); }
     catch (e) { log('hunt err: ' + e.message.slice(0, 60)); }
+
+    if (outcome === 'dead') {
+      stats.phase = 'respawning_after_death';
+      stats.region = 'world';
+      stats.queueAhead = null;
+      stats.hp = 100;
+      saveState();
+      log('♻️ death recovery -> requeue same shard');
+      expectedClose = true;
+      try { p.close(); } catch {}
+      await sleep(4000);
+      continue;
+    }
 
     // keluar wild sebelum reconnect (aman)
     try { if (/^wild/.test(p.region)) { p.setRegion('world', NORTH_PORTAL.x, NORTH_PORTAL.z + 1); await sleep(2000); } } catch {}
+    expectedClose = true;
     try { p.close(); } catch {}
     saveState();
     await sleep(4000);

@@ -240,7 +240,8 @@ function replaceMainDesired(service, entry) {
 function syncDesiredFromLive() {
   const state = normalizeDesiredState(readAutoreviveState());
   let dirty = false;
-  if (pidOf(OPIDFILE) && !state.auto) { state.auto = { updatedAt: Date.now() }; dirty = true; }
+  const manualDesired = !!(state.fish || state.gather || state.combat);
+  if (pidOf(OPIDFILE) && !state.auto && !manualDesired) { state.auto = { updatedAt: Date.now() }; dirty = true; }
   if (!state.auto) {
     if (botPid() && !state.fish) { state.fish = { updatedAt: Date.now() }; dirty = true; }
     if (gatherPid() && !state.gather) {
@@ -266,12 +267,37 @@ async function desiredServiceSpec(name, meta = {}) {
   if (name === 'combat') return { script: 'combat-bot.js', args: [shard], pidfile: CPIDFILE, label: 'Combat bot', shard };
   return null;
 }
+function liveMainService() {
+  if (pidOf(OPIDFILE)) return 'auto';
+  if (combatPid()) return 'combat';
+  if (gatherPid()) return 'gather';
+  if (botPid()) return 'fish';
+  return null;
+}
+function stopMainService(name) {
+  if (name === 'auto') return stopPidfile(OPIDFILE);
+  if (name === 'combat') return stopPidfile(CPIDFILE);
+  if (name === 'gather') return stopPidfile(GPIDFILE);
+  if (name === 'fish') return stopPidfile(PIDFILE);
+  return null;
+}
 async function ensureDesiredServices() {
   const state = normalizeDesiredState(readAutoreviveState());
   saveAutoreviveState(state);
+  const desiredMain = state.auto ? 'auto' : state.combat ? 'combat' : state.gather ? 'gather' : state.fish ? 'fish' : null;
+  const liveMain = liveMainService();
+  if (desiredMain && liveMain && liveMain !== desiredMain) {
+    stopMainService(liveMain);
+  }
   for (const [name, meta] of Object.entries(state)) {
     const spec = await desiredServiceSpec(name, meta);
     if (!spec) continue;
+    if (name === 'gather' && pidOf(spec.pidfile)) {
+      const liveMeta = readJson(spec.pidfile) || {};
+      if ((liveMeta.kind || 'tree') !== (meta.kind || 'tree')) {
+        stopMainService('gather');
+      }
+    }
     if (pidOf(spec.pidfile)) continue;
     const pid = spawnBot(spec.script, spec.args, spec.pidfile);
     if (name === 'gather') {
@@ -481,7 +507,19 @@ async function hStatus() {
   const cs = readJson(path.join(OUT, 'combat-state.json'));
   lines.push('');
   lines.push('📦 <b>Session</b>');
-  if (fr && s && isFreshState(s)) lines.push(`🎣 fish ${s.ok || 0}/${s.casts || 0} | 🎒 ${s.fish || 0} | 🍳 ${s.cooked || 0} | 💰 ${s.sold || 0} | ⏱ ${fmtAgeMin(s.ageMin)}`);
+  if (fr && s && isFreshState(s)) {
+    const fishPhaseMap = {
+      boot: 'boot',
+      queue: s.queueAhead != null ? `queue ${s.queueAhead}` : 'queue',
+      presence: 'presence',
+      travel_pond: 'travel pond',
+      pond: 'pond',
+      fishing: 'fishing',
+      reconnect: 'reconnect',
+    };
+    const fishPhase = s.phase ? (fishPhaseMap[s.phase] || s.phase) : null;
+    lines.push(`🎣 fish ${s.ok || 0}/${s.casts || 0} | 🎒 ${s.fish || 0} | 🍳 ${s.cooked || 0} | 💰 ${s.sold || 0}${fishPhase ? ` | 📍 ${fishPhase}` : ''} | ⏱ ${fmtAgeMin(s.ageMin)}`);
+  }
   if (gr && g && isFreshState(g, 60 * 60 * 1000)) {
     const phaseLabel = g.phase === 'queue'
       ? (g.queueAhead != null ? `queue ${g.queueAhead}` : 'queue')
@@ -493,11 +531,14 @@ async function hStatus() {
       boot: 'boot',
       prep: 'prep',
       queue: cs.queueAhead != null ? `queue ${cs.queueAhead}` : 'queue',
+      respawning_after_death: 'respawning after death',
+      requeue_after_death: cs.queueAhead != null ? `requeue after death ${cs.queueAhead}` : 'requeue after death',
       presence: 'presence',
       wild: 'wild',
       hunt: 'hunt',
       retreat: 'retreat',
       exit: 'exit',
+      dead: 'dead',
       reconnect: 'reconnect',
     };
     const phaseLabel = cs.phase ? (phaseMap[cs.phase] || cs.phase) : null;
@@ -608,6 +649,14 @@ function marketSellSafetyWarning() {
   if (!botPid() && !gatherPid() && !combatPid() && !pidOf(OPIDFILE)) return '';
   return '<i>Warning: a bot is currently running. Selling while automation is active may fail if inventory slots change. For the safest sell flow, use /stop first.</i>\n\n';
 }
+function fmtMarketNum(v, digits = 2) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '?';
+  return n.toFixed(digits).replace(/\.?0+$/, '');
+}
+function roundMarketTotal(v) {
+  return Math.max(1, Math.round(Number(v) || 0));
+}
 
 async function hMarket() {
   const authErr = await ensureLoginOk();
@@ -619,7 +668,7 @@ async function hMarket() {
     try {
       const r = await c.marketplaceStats(itemType);
       const last = Array.isArray(r?.samples) && r.samples.length ? r.samples[r.samples.length - 1] : null;
-      lines.push(`${label} — avg30d <b>${r?.avg30d ?? '?'}g</b> | last ${last?.avgUnitPrice ?? '?'}g | sales ${last?.sales ?? 0}`);
+      lines.push(`${label} — avg30d <b>${fmtMarketNum(r?.avg30d)}g/unit</b> | last ${fmtMarketNum(last?.avgUnitPrice)}g/unit | sales ${last?.sales ?? 0}`);
     } catch (e) {
       lines.push(`${label} — err ${e.message.slice(0, 30)}`);
     }
@@ -629,9 +678,14 @@ async function hMarket() {
   lines.push('', `🪙 $KINS: <b>${kins}</b>`, '', '<i>Choose an action — Sell (gold/$KINS) or Buy from live listings.</i>');
   mkReset();
   await tg.send(lines.join('\n'), {
-    buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }]],
+    buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }], [{ text: '📦 MY LISTINGS', data: 'mk:mine' }]],
   });
   return null;
+}
+
+function formatListingPrice(x) {
+  if (x.currency === 'token' || x.currency === 'kins') return `$${x.priceUsd ?? '?'} total ($KINS)`;
+  return `${x.priceGold ?? '?'}g total`;
 }
 
 async function mkShowInventory(ctx) {
@@ -659,18 +713,39 @@ async function mkPickCurrency(slotIdx, ctx) {
   const c = await client();
   const me = await c.me(); const sl = (me.backpack?.invSlots || [])[Number(slotIdx)];
   if (!sl || !sl.t) { await tg.editMessage(ctx.chatId, ctx.messageId, '⚠️ Slot is empty, please choose again.', { buttons: [[{ text: '⬅️ Back', data: 'mk:sell' }]] }); return; }
-  mkSession = { mode: 'sell', slotIndex: Number(slotIdx), item: sl.t, step: 'pick-currency' };
+  mkSession = { mode: 'sell', slotIndex: Number(slotIdx), item: sl.t, have: Number(sl.n || 1), step: 'pick-currency' };
   await tg.editMessage(ctx.chatId, ctx.messageId,
     `${marketSellSafetyWarning()}💰 <b>SELL ${ITEM_LABEL[sl.t] || sl.t}</b> (you have ${sl.n || 1})\nWhich currency do you want to use?`,
     { buttons: [[{ text: '🪙 Gold', data: 'mk:cur:gold' }, { text: '🪙 $KINS', data: 'mk:cur:token' }], [{ text: '⬅️ Back', data: 'mk:sell' }]] });
 }
 async function mkAskQtyPrice(currency, ctx) {
   if (!mkSession || !mkSession.item) { await tg.send('⚠️ Session expired, please run /market again.'); return; }
-  mkSession = { mode: 'sell', item: mkSession.item, slotIndex: mkSession.slotIndex, currency, step: 'await-input' };
-  const unit = currency === 'token' ? 'USD (total listing)' : 'gold (per unit)';
+  mkSession = { mode: 'sell', item: mkSession.item, slotIndex: mkSession.slotIndex, have: mkSession.have, currency, step: 'await-input' };
+  const unit = currency === 'token' ? 'USD (total listing)' : 'gold (total listing, whole number)';
+  let hint = '';
+  if (currency === 'gold') {
+    try {
+      const c = await client();
+      const st = await c.marketplaceStats(mkSession.item);
+      const unitAvg = Number(st?.avg30d);
+      if (Number.isFinite(unitAvg) && unitAvg > 0) {
+        const haveQty = Number(mkSession.have || 1);
+        const fast = roundMarketTotal(unitAvg * haveQty * 0.75);
+        const normal = roundMarketTotal(unitAvg * haveQty);
+        const premium = roundMarketTotal(unitAvg * haveQty * 1.25);
+        hint =
+          `\n\n📈 Market avg right now: <b>${fmtMarketNum(unitAvg)}g/unit</b>` +
+          `\nFor your current stack <b>${haveQty}</b>:` +
+          `\n• fast sell: <code>${haveQty} ${fast}</code>` +
+          `\n• normal: <code>${haveQty} ${normal}</code>` +
+          `\n• premium: <code>${haveQty} ${premium}</code>` +
+          `\n\nYou can also type any custom total you want: <code>qty price</code>.`;
+      }
+    } catch {}
+  }
   await tg.editMessage(ctx.chatId, ctx.messageId,
     `${marketSellSafetyWarning()}💰 <b>SELL ${ITEM_LABEL[mkSession.item] || mkSession.item}</b> — ${currency === 'token' ? '$KINS' : 'Gold'}\n\n` +
-    `Type: <code>qty price</code>\nExample: <code>1 25</code>\n\n• qty = quantity\n• price = ${unit}`,
+    `Type: <code>qty price</code>\nExample: <code>200 2</code>\n\n• qty = quantity\n• price = ${unit}${hint}`,
     { buttons: [[{ text: '❌ Cancel', data: 'mk:back' }]] });
 }
 
@@ -686,13 +761,16 @@ async function mkSubmitListing(text) {
   if (!sl || sl.t !== item) { mkReset(); return '⚠️ The item in that slot changed. Please run /market again.'; }
   const have = sl.n || 1;
   if (have < qty) { mkReset(); return `⚠️ Not enough stock: you have ${have} ${ITEM_LABEL[item] || item}, but tried to sell ${qty}.`; }
+  if (currency === 'gold' && !Number.isInteger(price)) {
+    return '⚠️ Gold listing must use a whole-number total price. Example: <code>200 2</code> means 200 items for total 2 gold.';
+  }
   const payload = { itemType: item, slotKind: 'inv', slotIndex, quantity: qty, currency };
   if (currency === 'token') payload.priceUsd = price; else payload.priceGold = price;
   try {
     const r = await c.marketplaceSell(payload);
     mkReset();
     if (r && r.ok === false) return `❌ Listing rejected: ${JSON.stringify(r).slice(0, 120)}`;
-    const curLabel = currency === 'token' ? `$${price} (≈$KINS)` : `${price}g/unit`;
+    const curLabel = currency === 'token' ? `$${price} total (≈$KINS)` : `${price}g total`;
     return `✅ <b>Listed!</b>\n${ITEM_LABEL[item] || item} x${qty} @ ${curLabel}\n\n<i>${currency === 'token' ? '$KINS masuk wallet pas ada buyer (95% kamu / 5% treasury).' : 'Dibayar gold pas ada buyer.'}</i>`;
   } catch (e) {
     mkReset();
@@ -713,11 +791,49 @@ async function mkShowBuy(ctx) {
   const lines = ['🛒 <b>BUY — Listing Live</b>', ''];
   for (const x of arr.slice(0, 12)) {
     const it = x.itemType || x.item; const lbl = ITEM_LABEL[it] || it;
-    if (x.currency === 'token' || x.currency === 'kins') lines.push(`${lbl} x${x.quantity} — <b>$${x.priceUsd ?? '?'}</b> ($KINS) • ${x.sellerName || '?'}`);
-    else lines.push(`${lbl} x${x.quantity} — <b>${x.priceGold ?? '?'}g</b> • ${x.sellerName || '?'}`);
+    lines.push(`${lbl} x${x.quantity} — <b>${formatListingPrice(x)}</b> • ${x.sellerName || '?'}`);
   }
   lines.push('', '<i>⚠️ Buying a $KINS listing requires an on-chain wallet signature — complete that in the web game. Gold listings are purchased in-game.</i>');
-  await tg.editMessage(ctx.chatId, ctx.messageId, lines.join('\n'), { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }]] });
+  await tg.editMessage(ctx.chatId, ctx.messageId, lines.join('\n'), { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }], [{ text: '📦 My Listings', data: 'mk:mine' }]] });
+}
+
+async function mkShowMine(ctx) {
+  const c = await client();
+  let arr = [];
+  try {
+    const Lst = await c.marketplaceListings({ limit: 20, mine: true });
+    arr = Lst.listings || Lst.items || Lst.data || [];
+  } catch (e) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, `⚠️ Failed to load your listings: ${e.message.slice(0, 50)}`, { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }]] });
+    return;
+  }
+  if (!arr.length) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, '📦 You have no active listings right now.', { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }], [{ text: '💰 Sell', data: 'mk:sell' }]] });
+    return;
+  }
+  const lines = ['📦 <b>My Listings</b>', ''];
+  const buttons = [];
+  for (const x of arr.slice(0, 10)) {
+    const it = x.itemType || x.item; const lbl = ITEM_LABEL[it] || it;
+    lines.push(`#${x.id} • ${lbl} x${x.quantity} — <b>${formatListingPrice(x)}</b>`);
+    buttons.push([{ text: `❌ Cancel #${x.id}`, data: `mk:cancel:${x.id}` }]);
+  }
+  buttons.push([{ text: '⬅️ Back', data: 'mk:back' }]);
+  await tg.editMessage(ctx.chatId, ctx.messageId, lines.join('\n'), { buttons });
+}
+
+async function mkCancelListing(id, ctx) {
+  const c = await client();
+  try {
+    const r = await c.marketplaceCancel(Number(id));
+    if (r && r.ok === false) {
+      await tg.editMessage(ctx.chatId, ctx.messageId, `❌ Cancel rejected: ${JSON.stringify(r).slice(0, 120)}`, { buttons: [[{ text: '⬅️ Back', data: 'mk:mine' }]] });
+      return;
+    }
+    await tg.editMessage(ctx.chatId, ctx.messageId, `✅ Listing #${id} cancelled.`, { buttons: [[{ text: '📦 Refresh My Listings', data: 'mk:mine' }], [{ text: '⬅️ Back', data: 'mk:back' }]] });
+  } catch (e) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, `❌ Cancel failed: ${(e.message || '').slice(0, 120)}`, { buttons: [[{ text: '⬅️ Back', data: 'mk:mine' }]] });
+  }
 }
 
 async function onMarketCallback(data, ctx) {
@@ -725,10 +841,12 @@ async function onMarketCallback(data, ctx) {
   const rest = data.slice(3);
   if (rest === 'sell') return mkShowInventory(ctx);
   if (rest === 'buy') return mkShowBuy(ctx);
+  if (rest === 'mine') return mkShowMine(ctx);
   if (rest === 'back') {
     mkReset();
-    return tg.editMessage(ctx.chatId, ctx.messageId, '🛍 <b>Marketplace</b> — choose an action:', { buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }]] });
+    return tg.editMessage(ctx.chatId, ctx.messageId, '🛍 <b>Marketplace</b> — choose an action:', { buttons: [[{ text: '💰 SELL', data: 'mk:sell' }, { text: '🛒 BUY', data: 'mk:buy' }], [{ text: '📦 MY LISTINGS', data: 'mk:mine' }]] });
   }
+  if (rest.startsWith('cancel:')) return mkCancelListing(rest.slice(7), ctx);
   if (rest.startsWith('itm:')) return mkPickCurrency(rest.slice(4), ctx);
   if (rest.startsWith('cur:')) return mkAskQtyPrice(rest.slice(4), ctx);
 }
@@ -745,11 +863,28 @@ async function hQuest() {
   const c = await client(); const q = await c.dailyQuestProgress().catch(() => ({}));
   const dq = q?.dailyQuest || {}; const cfg = q?.dailyQuestConfig || {};
   if (!(cfg.quests || []).length) return `📋 <b>Daily Quest</b> (${dq.day || '?'})\n(no quests available today)`;
+  const prog = { ...(dq.prog || {}) };
+  const claimed = { ...(dq.claimed || {}) };
+  const claimedNow = [];
+  for (const quest of (cfg.quests || [])) {
+    const pr = prog[quest.id] || 0;
+    if (pr >= quest.target && !claimed[quest.id]) {
+      try {
+        const r = await c.dailyQuestClaim(quest.id);
+        if (!r?.error) {
+          claimed[quest.id] = true;
+          claimedNow.push(quest.label);
+        }
+      } catch {}
+    }
+  }
   const lines = (cfg.quests || []).map((quest) => {
-    const pr = (dq.prog || {})[quest.id] || 0; const cl = (dq.claimed || {})[quest.id];
+    const pr = prog[quest.id] || 0; const cl = claimed[quest.id];
     return `${cl ? '✅' : pr >= quest.target ? '🎁' : '▫️'} ${quest.label} — ${pr}/${quest.target} (${quest.rewardXpSpreadTotal}XP)`;
   });
-  return `📋 <b>Daily Quest</b> (${dq.day})\n` + lines.join('\n');
+  const head = `📋 <b>Daily Quest</b> (${dq.day})`;
+  const auto = claimedNow.length ? `\n🎁 Auto-claimed: ${claimedNow.join(', ')}` : '';
+  return head + auto + '\n' + lines.join('\n');
 }
 async function hVersion() {
   const authErr = await ensureLoginOk();
@@ -948,6 +1083,11 @@ async function syncMenu() {
   fs.mkdirSync(path.join(OUT, 'control'), { recursive: true });
   fs.writeFileSync(TGPIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() }));
   process.on('exit', () => { try { fs.unlinkSync(TGPIDFILE); } catch {} });
+  process.on('SIGINT', () => { console.log('[telegram-bot] SIGINT received, exiting'); process.exit(0); });
+  process.on('SIGTERM', () => { console.log('[telegram-bot] SIGTERM received, exiting'); process.exit(0); });
+  process.on('SIGHUP', () => { console.log('[telegram-bot] SIGHUP received, exiting'); process.exit(0); });
+  process.on('uncaughtException', (err) => { console.error('[telegram-bot] uncaughtException', err?.stack || err?.message || err); process.exit(1); });
+  process.on('unhandledRejection', (err) => { console.error('[telegram-bot] unhandledRejection', err?.stack || err?.message || err); process.exit(1); });
   syncDesiredFromLive();
   await syncMenu();
   await maybeNotifyVersionChange();

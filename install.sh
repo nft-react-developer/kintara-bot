@@ -14,6 +14,9 @@ DIR="${KINTARA_DIR:-kintara-bot}"
 echo "🤖 Kintara Bot installer"
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+have_systemd() {
+  have_cmd systemctl && [ -d /run/systemd/system ]
+}
 need_sudo() {
   if have_cmd sudo; then
     sudo "$@"
@@ -75,6 +78,18 @@ ensure_node_18_plus() {
   fi
 }
 
+install_systemd_service() {
+  local service_src="$1"
+  local service_name="kintara-bot.service"
+  local service_dst="/etc/systemd/system/${service_name}"
+
+  sed "s|__WORKDIR__|$DIR|g" "$service_src" | need_sudo tee "$service_dst" >/dev/null
+  need_sudo systemctl daemon-reload
+  need_sudo systemctl enable --now "$service_name"
+  sleep 2
+  need_sudo systemctl --no-pager --full status "$service_name" || true
+}
+
 # --- system deps ---
 install_git
 ensure_node_18_plus
@@ -87,6 +102,7 @@ else
   echo "📥 cloning repo..."; git clone --depth 1 "$REPO" "$DIR"
 fi
 cd "$DIR"
+DIR="$(pwd)"
 
 # --- deps ---
 echo "📦 installing dependencies..."
@@ -108,14 +124,23 @@ else
   echo "ℹ️  .env already exists — skipped."
 fi
 
-# --- start telegram control bot (background) ---
+# --- start telegram control bot ---
 echo "🚀 starting Telegram control bot..."
 mkdir -p recon/control
-nohup node tools/telegram-bot.js > recon/telegram.log 2>&1 &
-echo $! > recon/control/telegram.pid
-sleep 2
-echo ""
-echo "✅ DONE! Control bot is running (pid $(cat recon/control/telegram.pid))."
-echo "   Open your Telegram bot, type /start then /help."
-echo "   Commands: /fishing /gather /mine /combat /auto /stop /status /skills /balance /market /spinner /server /quest"
-echo "   Log: $DIR/recon/telegram.log"
+if have_systemd; then
+  install_systemd_service "$DIR/kintara-bot.service"
+  echo ""
+  echo "✅ DONE! systemd service is active: kintara-bot.service"
+  echo "   Open your Telegram bot, type /start then /help."
+  echo "   Commands: /fishing /gather /mine /combat /auto /stop /status /skills /balance /market /spinner /server /quest"
+  echo "   Logs: journalctl -u kintara-bot.service -f"
+else
+  nohup node tools/telegram-bot.js > recon/telegram.log 2>&1 &
+  echo $! > recon/control/telegram.pid
+  sleep 2
+  echo ""
+  echo "✅ DONE! Control bot is running (pid $(cat recon/control/telegram.pid))."
+  echo "   Open your Telegram bot, type /start then /help."
+  echo "   Commands: /fishing /gather /mine /combat /auto /stop /status /skills /balance /market /spinner /server /quest"
+  echo "   Log: $DIR/recon/telegram.log"
+fi

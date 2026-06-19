@@ -21,11 +21,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/rygroup-dev/kintara-bot/main
 ```
 
 The installer clones the repo, installs dependencies, asks for **just 2 inputs** (wallet private key + Telegram bot token), writes `.env` with locked permissions, and starts the Telegram control bot.
+On `systemd` machines it installs a persistent `kintara-bot.service` with auto-restart, so Telegram control comes back automatically after a crash or reboot.
 On supported systems it will also try to install missing base dependencies like **git** and **Node.js** automatically.
 
 **What you get after install:**
 
-- A running **Telegram-controlled bot** on your machine
+- A running **Telegram-controlled bot** on your machine, with `systemd` auto-restart when available
 - Wallet-based login with **no browser and no manual cookie handling**
 - Ready-to-use commands for farming, combat, quests, market checks, spinner, and diagnostics
 - A clean `.env` setup so you can restart later with `npm start`
@@ -129,7 +130,8 @@ npm run auto     # orchestrator
 
 ## 🩺 Troubleshooting
 
-- **Bot does not respond on Telegram**: verify `TELEGRAM_BOT_TOKEN`, then restart with `npm start`
+- **Bot does not respond on Telegram**: verify `TELEGRAM_BOT_TOKEN`, then restart with `systemctl restart kintara-bot.service` (or `npm start` if you are not using `systemd`)
+- **Need live logs**: use `journalctl -u kintara-bot.service -f` on `systemd` systems, or `tail -f recon/telegram.log` on manual installs
 - **Login/auth fails**: re-check `WALLET_PRIVATE_KEY`; it must be a valid base58 Kintara wallet key
 - **Marketplace sell blocked**: your character may still be below the required seller skill, or the item is not in an inventory slot
 - **Merchant gold trade unavailable**: this is controlled server-side by Kintara, not by the bot

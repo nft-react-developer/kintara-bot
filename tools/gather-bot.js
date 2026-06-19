@@ -16,9 +16,13 @@ const gs = require('../lib/gameState');
 const KIND = process.argv[2] || 'tree';
 const SHARD = process.argv[3] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
+const PIDFILE = path.join(OUT, 'control', 'gatherbot.pid');
 const log = (...a) => { const s = `[${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}`; console.log(s); fs.appendFileSync(path.join(OUT, 'gather.log'), s + '\n'); };
 const lt = {}; const logT = (k, m, ms = 30000) => { const n = Date.now(); if (!lt[k] || n - lt[k] > ms) { lt[k] = n; log(m); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const retryDelayMs = (attempt, base = 5000, cap = 60000) => Math.min(cap, base * (2 ** Math.max(0, attempt - 1))) + Math.floor(Math.random() * 1500);
+const TRANSIENT_FAILOVER_AFTER = 5;
+const isTransientGatewayErr = (msg) => /503|Unexpected token '<'|<!doctype|Non-JSON|presence ws err/i.test(String(msg || ''));
 const stats = {
   felled: 0,
   wood: 0,
@@ -53,7 +57,21 @@ function trackAccountMeta(me) {
 }
 
 let cli;
+async function createClientWithRetry() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await KintaraClient.create();
+    } catch (e) {
+      if (isWalletBannedError(e)) throw e;
+      const waitMs = retryDelayMs(attempt);
+      saveState({ phase: 'bootstrap_retry', queueAhead: null });
+      log(`bootstrap attempt ${attempt} gagal: ${String(e.message || e).slice(0, 50)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs);
+    }
+  }
+}
 async function connectWithRetry() {
+  let transientGatewayFails = 0;
   for (let attempt = 1; ; attempt++) {
     try {
       const p = new Presence(SHARD);
@@ -63,14 +81,24 @@ async function connectWithRetry() {
         saveState({ phase: 'queue', queueAhead: Number.isFinite(Number(d?.ahead)) ? Number(d.ahead) : null, region: p.region });
       });
       await p.connect();
+      transientGatewayFails = 0;
       log('✅ presence live region=' + p.region);
       saveState({ phase: 'presence', queueAhead: null, region: p.region });
       return p;
     } catch (e) {
       if (isWalletBannedError(e)) throw e;
+      if (isTransientGatewayErr(e.message)) transientGatewayFails++;
+      else transientGatewayFails = 0;
+      if (transientGatewayFails >= TRANSIENT_FAILOVER_AFTER) {
+        saveState({ phase: 'failover_restart', queueAhead: null });
+        log(`♻️ shard failover after ${transientGatewayFails} transient gateway errors`);
+        throw new Error('transient_presence_failover');
+      }
       saveState({ phase: 'reconnect', queueAhead: null });
-      log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 50)} — retry 15s`);
-      await sleep(15000);
+      const waitMs = retryDelayMs(attempt);
+      saveState({ phase: 'reconnect_wait', queueAhead: null });
+      log(`connect attempt ${attempt} gagal: ${e.message.slice(0, 50)} — retry ${Math.ceil(waitMs / 1000)}s`);
+      await sleep(waitMs);
     }
   }
 }
@@ -123,9 +151,12 @@ async function gatherLoop(p) {
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
+  fs.mkdirSync(path.join(OUT, 'control'), { recursive: true });
   fs.writeFileSync(path.join(OUT, 'gather.log'), '');
+  fs.writeFileSync(PIDFILE, JSON.stringify({ pid: process.pid, kind: KIND, shard: SHARD, started: Date.now() }));
+  process.on('exit', () => { try { fs.unlinkSync(PIDFILE); } catch {} });
   saveState({ phase: 'boot', queueAhead: null, region: 'world' });
-  const { client: c, player } = await KintaraClient.create(); cli = c;
+  const { client: c, player } = await createClientWithRetry(); cli = c;
   log('GATHER BOT START kind=' + KIND + ' pid=' + player?.id);
   for (;;) {
     const p = await connectWithRetry();
