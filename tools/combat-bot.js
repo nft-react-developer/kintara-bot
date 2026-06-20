@@ -65,6 +65,40 @@ const stats = {
   hp: 100, region: 'world', phase: 'boot', queueAhead: null, started: Date.now(),
   skillXp: {}, lootScans: 0, lootClaims: 0, lootErrors: 0,
 };
+
+const WS_LOOT_HINT_RE = /loot|drop|bag|reward|grant|backpack|invSlots|hotbar|mountSlots|cosmeticSlots|petSlots|furnitureSlots|gold|wild_sword|tool_/i;
+
+function hasWsLootHint(value, depth = 0) {
+  if (value == null || depth > 5) return false;
+  if (typeof value === 'string') return WS_LOOT_HINT_RE.test(value);
+  if (typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.slice(0, 30).some((item) => hasWsLootHint(item, depth + 1));
+  return Object.entries(value).some(([key, item]) => WS_LOOT_HINT_RE.test(key) || hasWsLootHint(item, depth + 1));
+}
+
+function compactJson(value, max = 2200) {
+  let text;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function logCombatWsDiagnostic(p, message) {
+  if (!message || typeof message !== 'object') return;
+  const ownCombatEvent = message.t === 'wm_ev' && Number(message.by) === Number(p.myId);
+  const killEvent = ownCombatEvent && (Number(message.zm) === 1 || Number(message.dr) === 1);
+  if (killEvent) {
+    log(`📡 ws kill payload: ${compactJson(message)}`);
+    return;
+  }
+  if (hasWsLootHint(message)) {
+    logT(`wshint:${message.t || 'unknown'}`, `📡 ws loot hint ${message.t || 'unknown'}: ${compactJson(message)}`, 3000);
+  }
+}
+
 function saveState(extra = {}) {
   try { fs.writeFileSync(STATEFILE, JSON.stringify({ ...stats, ...extra, ageMin: Math.round((Date.now() - stats.started) / 60000) }, null, 2)); } catch {}
 }
@@ -500,6 +534,7 @@ async function connectWithRetry() {
       const p = new Presence(SHARD);
       if (cli) p.setCookie(cli.cookie, currentPlayer);
       p.on('log', (m) => log('[ws] ' + m));
+      p.on('msg', (d) => logCombatWsDiagnostic(p, d));
       p.on('queue', (d) => {
         stats.phase = (stats.hp | 0) <= 0 && stats.deaths > 0 ? 'requeue_after_death' : 'queue';
         stats.queueAhead = Number.isFinite(Number(d?.ahead)) ? Number(d.ahead) : null;
