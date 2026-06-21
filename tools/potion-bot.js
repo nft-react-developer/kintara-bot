@@ -7,7 +7,7 @@ const { config } = require('../config');
 const { Presence } = require('../lib/presenceWs');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { normalizePotionType, parsePotionQuantity } = require('../lib/potionCommand');
-const { runPotionPurchase } = require('../lib/potionPurchase');
+const { runPotionPurchase, spawnToPresenceState } = require('../lib/potionPurchase');
 
 const potionType = normalizePotionType(process.argv[2]);
 const quantity = parsePotionQuantity(process.argv[3]);
@@ -62,8 +62,12 @@ async function main() {
   saveState('auth');
   log(`Starting potion worker type=${potionType} quantity=${quantity} shard=${shard}`);
   const { client, player } = await KintaraClient.create();
+  const me = await client.me();
+  const initialState = spawnToPresenceState(me?.meta?.spawn);
+  log(`Loaded persisted position region=${initialState.region} x=${initialState.x} z=${initialState.z}`);
   const presence = new Presence(shard, { synchronizeSelf: true });
   presence.setCookie(client.cookie, player);
+  presence.seedSelfState(initialState);
   presence.on('log', (message) => log('[ws]', message));
   presence.on('queue', (message) => {
     const ahead = Number.isFinite(Number(message?.ahead)) ? Number(message.ahead) : null;

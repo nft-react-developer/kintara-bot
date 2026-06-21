@@ -10,6 +10,15 @@ test('authoritative mode starts without a fabricated world position', () => {
   assert.equal(presence.selfState, null);
 });
 
+test('persisted self state seeds the first authoritative position', () => {
+  const presence = new Presence('s4', { synchronizeSelf: true });
+  const state = presence.seedSelfState({ region: 'alchemist_shop', x: 2, y: 0.41, z: -1 });
+  assert.equal(state.region, 'alchemist_shop');
+  assert.equal(presence.pos.x, 2);
+  assert.equal(presence.pos.z, -1);
+  assert.equal(presence.selfStateVersion, 1);
+});
+
 test('waitForSelfState resolves from the matching player snapshot', async () => {
   const presence = new Presence('s4', { synchronizeSelf: true });
   presence.myId = 42;

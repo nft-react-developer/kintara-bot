@@ -1,7 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parsePotionQuantity, normalizePotionType } = require('../lib/potionCommand');
-const { SHOP, navigateToShop, buyPotions, leaveShop, runPotionPurchase } = require('../lib/potionPurchase');
+const {
+  SHOP,
+  navigateToShop,
+  buyPotions,
+  leaveShop,
+  runPotionPurchase,
+  spawnToPresenceState,
+  presencePositionToSpawn,
+} = require('../lib/potionPurchase');
 
 class FakePresence {
   constructor(region, x, z) {
@@ -47,6 +55,19 @@ test('potion command accepts supported types and quantities only', () => {
   assert.equal(parsePotionQuantity('0'), null);
   assert.equal(parsePotionQuantity('1000'), null);
   assert.equal(parsePotionQuantity('1.5'), null);
+});
+
+test('persisted player spawn converts to Presence coordinates', () => {
+  assert.deepEqual(spawnToPresenceState({ realm: 'world', col: 12, row: 3 }), {
+    region: 'world', x: -18.5, y: 0.25, z: -27.5, ry: 0,
+  });
+  assert.deepEqual(spawnToPresenceState({ realm: 'alchemistShop', col: 5, row: 2 }), {
+    region: 'alchemist_shop', x: 1, y: 0.41, z: -2, ry: 0,
+  });
+  assert.deepEqual(presencePositionToSpawn('alchemist_shop', { x: 0, z: 3 }), {
+    realm: 'alchemistShop', col: 4, row: 7,
+  });
+  assert.throws(() => spawnToPresenceState({ realm: 'pond', col: 1, row: 1 }), /unsupported starting region/);
 });
 
 test('navigation starts from the actual position when already inside the shop', async () => {
@@ -102,6 +123,7 @@ test('complete purchase flow enters, buys, and returns to world', async () => {
   let count = 3;
   const client = {
     async me() { return { backpack: { potion_shield: count } }; },
+    async saveSpawn() {},
     async alchemistPotionBuy() {
       count++;
       return { ok: true, backpack: { potion_shield: count } };
