@@ -12,7 +12,8 @@
     "quest": "node tools/daily-quest.js",
     "auto": "node tools/orchestrator.js",
     "combat": "node tools/combat-bot.js",
-    "dashboard": "node server/httpServer.js"
+    "dashboard": "node server/httpServer.js",
+    "test": "node --test test/*.test.js"
   },
   "license": "MIT",
   "engines": {

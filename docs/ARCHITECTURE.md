@@ -14,6 +14,7 @@ Telegram operator
       +--> tools/gather-bot.js        # wood/stone/coal gathering
       +--> tools/orchestrator.js      # chooses one activity
       +--> tools/daily-quest.js       # claims completed quests
+      +--> tools/potion-bot.js        # one-shot alchemist purchase worker
 
 Activity process
       |
@@ -48,6 +49,7 @@ The Telegram bot is the control plane. It starts activity scripts as detached ch
 | Gathering bot | `tools/gather-bot.js` | Learns resource nodes from WebSocket events, walks to nodes, harvests, persists loot. |
 | Orchestrator | `tools/orchestrator.js` | Claims completed daily quests, then chooses fishing or gathering based on daily quests, inventory, and skill levels. |
 | Daily quest bot | `tools/daily-quest.js` | Polls daily quest progress and claims completed quests. |
+| Potion worker | `tools/potion-bot.js` | Synchronizes the live position, walks to the alchemist, buys potions, returns to Mainland, and exits. |
 
 ## Data flow
 

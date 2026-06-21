@@ -15,6 +15,7 @@ const { levelFromTotalXp, formatSkillBandProgressShort, averageLevelFloor, preci
 const { isWalletBannedError } = require('../lib/walletAuth');
 const { Presence } = require('../lib/presenceWs');
 const { getErrors } = require('../lib/errorbus');
+const { POTION_TYPES, POTION_LABELS, normalizePotionType, parsePotionQuantity } = require('../lib/potionCommand');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'recon');
@@ -22,7 +23,10 @@ const PIDFILE = path.join(OUT, 'control', 'fishbot.pid');
 const GPIDFILE = path.join(OUT, 'control', 'gatherbot.pid');
 const OPIDFILE = path.join(OUT, 'control', 'orch.pid');
 const CPIDFILE = path.join(OUT, 'control', 'combatbot.pid');
+const PPIDFILE = path.join(OUT, 'control', 'potionbot.pid');
 const TGPIDFILE = path.join(OUT, 'control', 'telegram.pid');
+const POTION_JOBFILE = path.join(OUT, 'control', 'potion-job.json');
+const POTION_RESULTFILE = path.join(OUT, 'control', 'potion-result.json');
 const VERSION_STATEFILE = path.join(OUT, 'game-version-state.json');
 const AUTOREVIVE_STATEFILE = path.join(OUT, 'control', 'autorevive.json');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -126,6 +130,7 @@ function pidOf(f) {
 function botPid() { return pidOf(PIDFILE); }
 function gatherPid() { return pidOf(GPIDFILE); }
 function combatPid() { return pidOf(CPIDFILE); }
+function potionPid() { return pidOf(PPIDFILE); }
 function stopPidfile(pf) {
   const pid = pidOf(pf);
   if (!pid) return null;
@@ -157,6 +162,7 @@ function activityLabel(name, gatherKind = null) {
   }
   if (name === 'combat') return '⚔️ Combat';
   if (name === 'auto') return '🧠 Auto';
+  if (name === 'potion') return '🧪 Potion purchase';
   return 'Idle';
 }
 function procAgeMin(f) {
@@ -472,11 +478,13 @@ async function maybeNotifyVersionChange() {
     if (prev.sha && prev.sha !== current.sha) {
       clearDesired('fish', 'gather', 'auto', 'combat');
       const stopped = stopAllMainBots();
+      const stoppedPotion = cancelPotionJob();
       const stoppedNames = [
         stopped.auto ? 'auto' : null,
         stopped.fish ? 'fish' : null,
         stopped.gather ? 'gather' : null,
         stopped.combat ? 'combat' : null,
+        stoppedPotion ? 'potions' : null,
       ].filter(Boolean);
       const stopLine = stoppedNames.length
         ? `\n🛑 Automation auto-paused: ${stoppedNames.join(', ')}`
@@ -489,13 +497,13 @@ async function maybeNotifyVersionChange() {
 
 // ---------- handlers ----------
 async function hStatus() {
-  const fr = botPid(), gr = gatherPid(), cb = combatPid(), or = pidOf(OPIDFILE);
+  const fr = botPid(), gr = gatherPid(), cb = combatPid(), pp = potionPid(), or = pidOf(OPIDFILE);
   const gatherMeta = readJson(GPIDFILE) || {};
   const gatherState = readJson(path.join(OUT, 'gather-state.json'));
   const gatherKind = gatherMeta?.kind || gatherState?.kind || 'all';
   const gLbl = gatherKind === 'rock' ? '⛏ Mining' : gatherKind === 'tree' ? '🪓 Wood' : '🪓⛏ Gather';
   const orch = readJson(path.join(OUT, 'orchestrator-state.json'));
-  const active = cb ? 'combat' : gr ? 'gather' : fr ? 'fish' : or ? (orch?.current || 'auto') : 'idle';
+  const active = pp ? 'potion' : cb ? 'combat' : gr ? 'gather' : fr ? 'fish' : or ? (orch?.current || 'auto') : 'idle';
   const activeLabel = activityLabel(active, gatherKind);
   const activeAge = active === 'fish'
     ? fmtAgeMin(procAgeMin(PIDFILE))
@@ -503,11 +511,13 @@ async function hStatus() {
       ? fmtAgeMin(procAgeMin(GPIDFILE))
       : active === 'combat'
         ? fmtAgeMin(procAgeMin(CPIDFILE))
+        : active === 'potion'
+          ? fmtAgeMin(procAgeMin(PPIDFILE))
         : null;
   const lines = [
     '🤖 <b>Kintara Bot Status</b>',
     `🎯 <b>Active:</b> ${activeLabel}${activeAge ? ` • ${activeAge}` : ''}`,
-    `🧠 Auto ${or ? '🟢 ON' : '🔴 OFF'} | 🎣 Fish ${fr ? '🟢' : '🔴'} | ${gLbl} ${gr ? '🟢' : '🔴'} | ⚔️ Combat ${cb ? '🟢' : '🔴'}`,
+    `🧠 Auto ${or ? '🟢 ON' : '🔴 OFF'} | 🎣 Fish ${fr ? '🟢' : '🔴'} | ${gLbl} ${gr ? '🟢' : '🔴'} | ⚔️ Combat ${cb ? '🟢' : '🔴'} | 🧪 Potions ${pp ? '🟢' : '🔴'}`,
   ];
   if (or && orch) {
     lines.push('');
@@ -660,6 +670,213 @@ async function hSpinner() {
     `${tickerLine}\n\n<i>Free spin resets every 12 hours.</i>`;
 }
 
+const POTION_SESSION_TTL_MS = 10 * 60 * 1000;
+let potionSession = null;
+let potionMonitorRunning = false;
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function potionSessionActive() {
+  if (!potionSession) return false;
+  if (Date.now() - potionSession.updatedAt <= POTION_SESSION_TTL_MS) return true;
+  potionSession = null;
+  return false;
+}
+
+function potionSummary(session = potionSession) {
+  const label = POTION_LABELS[session?.potionType] || session?.potionType || '?';
+  return `🧪 <b>Potion Purchase</b>\nType: <b>${label}</b>\nQuantity: <b>${session?.quantity || '?'}</b>`;
+}
+
+function potionSelectionButtons() {
+  return [
+    [
+      { text: '❤️ Health', data: 'pt:type:health' },
+      { text: '🛡 Shield', data: 'pt:type:shield' },
+    ],
+    [
+      { text: '💪 Strength', data: 'pt:type:strength' },
+      { text: '☠️ Poison', data: 'pt:type:poison' },
+    ],
+    [10, 25, 50, 100].map((quantity) => ({ text: String(quantity), data: `pt:qty:${quantity}` })),
+    [{ text: '✏️ Custom quantity', data: 'pt:custom' }],
+    [{ text: '➡️ Review', data: 'pt:confirm' }, { text: '❌ Cancel', data: 'pt:cancel' }],
+  ];
+}
+
+async function hPotions() {
+  if (potionPid()) return '🧪 A potion purchase is already running. Please wait for its result.';
+  mkReset();
+  potionSession = { potionType: POTION_TYPES.health, quantity: 50, step: 'select', updatedAt: Date.now() };
+  await tg.send(`${potionSummary()}\n\nChoose a potion type and quantity. Health x50 is selected by default.`, {
+    buttons: potionSelectionButtons(),
+  });
+  return null;
+}
+
+async function showPotionSelection(ctx) {
+  potionSession.step = 'select';
+  potionSession.updatedAt = Date.now();
+  return tg.editMessage(ctx.chatId, ctx.messageId, `${potionSummary()}\n\nChoose a potion type and quantity.`, {
+    buttons: potionSelectionButtons(),
+  });
+}
+
+async function beginPotionJob(ctx) {
+  if (!potionSessionActive()) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, '⚠️ Potion session expired. Run /potions again.');
+    return;
+  }
+  if (potionPid()) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, '🧪 A potion purchase is already running.');
+    return;
+  }
+
+  syncDesiredFromLive();
+  const resumeDesired = normalizeDesiredState(readAutoreviveState());
+  const shard = await resolveShard();
+  const job = {
+    potionType: potionSession.potionType,
+    quantity: potionSession.quantity,
+    shard,
+    resumeDesired,
+    startedAt: Date.now(),
+  };
+
+  clearDesired('fish', 'gather', 'auto', 'combat');
+  const stopped = stopAllMainBots();
+  try { fs.unlinkSync(POTION_RESULTFILE); } catch {}
+  fs.writeFileSync(POTION_JOBFILE, JSON.stringify(job, null, 2));
+  await sleep(250);
+  const pid = spawnBot('potion-bot.js', [job.potionType, String(job.quantity), shard], PPIDFILE);
+  potionSession = null;
+  console.log(`[telegram-bot] potion worker started pid=${pid} type=${job.potionType} qty=${job.quantity}`);
+  await tg.editMessage(ctx.chatId, ctx.messageId,
+    `🧪 <b>Potion purchase started</b>\n${POTION_LABELS[job.potionType]} x${job.quantity}\nShard: <b>${shard}</b>\n\n` +
+    `${Object.values(stopped).some(Boolean) ? 'The current activity was paused and will resume automatically.' : 'No activity was running.'}`);
+  monitorPotionJob().catch((error) => console.error('potion monitor err', error.message));
+}
+
+async function monitorPotionJob() {
+  if (potionMonitorRunning) return;
+  potionMonitorRunning = true;
+  try {
+    while (potionPid()) await sleep(1000);
+    const job = readJson(POTION_JOBFILE);
+    if (!job) return;
+    const result = readJson(POTION_RESULTFILE) || {
+      ok: false,
+      potionType: job.potionType,
+      requested: job.quantity,
+      purchased: 0,
+      reason: 'worker stopped without a result',
+    };
+
+    const requested = Number(result.requested || job.quantity || 0);
+    const purchased = Number(result.purchased || 0);
+    const label = POTION_LABELS[result.potionType || job.potionType] || result.potionType || job.potionType;
+    const reason = result.reason ? `\nReason: <code>${escapeHtml(result.reason)}</code>` : '';
+    const heading = result.ok && result.complete !== false && purchased >= requested ? '✅ <b>Potion purchase complete</b>'
+      : purchased > 0 ? '⚠️ <b>Partial potion purchase</b>'
+        : '❌ <b>Potion purchase failed</b>';
+
+    const resumeDesired = normalizeDesiredState(job.resumeDesired || {});
+    const hadPreviousActivity = Object.keys(resumeDesired).length > 0;
+    saveAutoreviveState(resumeDesired);
+    let restoreText = hadPreviousActivity ? 'Previous activity restored.' : 'No previous activity was running.';
+    try {
+      await ensureDesiredServices();
+      console.log(`[telegram-bot] potion job finished; previous activity=${hadPreviousActivity ? 'restored' : 'none'}`);
+    } catch (error) {
+      console.error('potion activity restore err', error.message);
+      restoreText = `Previous activity could not be restored: <code>${escapeHtml(error.message)}</code>`;
+    }
+    await tg.send(`${heading}\n${escapeHtml(label)}: <b>${purchased}/${requested}</b>${reason}\n\n${restoreText}`).catch(() => {});
+    try { fs.unlinkSync(POTION_JOBFILE); } catch {}
+  } finally {
+    potionMonitorRunning = false;
+  }
+}
+
+function cancelPotionJob() {
+  const pid = stopPidfile(PPIDFILE);
+  try { fs.unlinkSync(POTION_JOBFILE); } catch {}
+  potionSession = null;
+  return pid;
+}
+
+async function onPotionCallback(data, ctx) {
+  if (!data.startsWith('pt:')) return false;
+  const action = data.slice(3);
+  if (action === 'cancel') {
+    potionSession = null;
+    await tg.editMessage(ctx.chatId, ctx.messageId, '❌ Potion purchase cancelled.');
+    return true;
+  }
+  if (!potionSessionActive()) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, '⚠️ Potion session expired. Run /potions again.');
+    return true;
+  }
+  if (action.startsWith('type:')) {
+    const potionType = normalizePotionType(action.slice(5));
+    if (potionType) potionSession.potionType = potionType;
+    await showPotionSelection(ctx);
+    return true;
+  }
+  if (action.startsWith('qty:')) {
+    const quantity = parsePotionQuantity(action.slice(4));
+    if (quantity) potionSession.quantity = quantity;
+    await showPotionSelection(ctx);
+    return true;
+  }
+  if (action === 'custom') {
+    potionSession.step = 'custom-quantity';
+    potionSession.updatedAt = Date.now();
+    await tg.editMessage(ctx.chatId, ctx.messageId,
+      `${potionSummary()}\n\nSend a custom quantity between <b>1 and 999</b>.`,
+      { buttons: [[{ text: '⬅️ Back', data: 'pt:back' }, { text: '❌ Cancel', data: 'pt:cancel' }]] });
+    return true;
+  }
+  if (action === 'back') {
+    await showPotionSelection(ctx);
+    return true;
+  }
+  if (action === 'confirm') {
+    potionSession.step = 'confirm';
+    potionSession.updatedAt = Date.now();
+    await tg.editMessage(ctx.chatId, ctx.messageId,
+      `${potionSummary()}\n\nThe current activity will pause, the character will walk to the shop, and the activity will resume afterward.`,
+      { buttons: [[{ text: '✅ Buy now', data: 'pt:execute' }], [{ text: '⬅️ Back', data: 'pt:back' }, { text: '❌ Cancel', data: 'pt:cancel' }]] });
+    return true;
+  }
+  if (action === 'execute') {
+    await beginPotionJob(ctx);
+    return true;
+  }
+  return true;
+}
+
+async function onPotionText(text) {
+  if (!potionSessionActive() || potionSession.step !== 'custom-quantity') return false;
+  const quantity = parsePotionQuantity(text);
+  if (!quantity) {
+    await tg.send('⚠️ Quantity must be a whole number between 1 and 999.');
+    return true;
+  }
+  potionSession.quantity = quantity;
+  potionSession.step = 'select';
+  potionSession.updatedAt = Date.now();
+  await tg.send(`${potionSummary()}\n\nCustom quantity saved. Review or change the selection.`, {
+    buttons: potionSelectionButtons(),
+  });
+  return true;
+}
+
 const MARKET_ITEMS = [
   ['fish', '🎣 fish'],
   ['cooked_fish_meat', '🍳 cooked'],
@@ -689,6 +906,7 @@ function roundMarketTotal(v) {
 async function hMarket() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
+  potionSession = null;
   const c = await client();
   const lines = ['🛍 <b>Marketplace — Live Prices</b>', ''];
   for (const [itemType, label] of MARKET_ITEMS) {
@@ -887,6 +1105,16 @@ async function onMarketText(text) {
   }
   return false;
 }
+
+async function onTelegramCallback(data, ctx) {
+  if (data.startsWith('pt:')) return onPotionCallback(data, ctx);
+  return onMarketCallback(data, ctx);
+}
+
+async function onTelegramText(text, ctx) {
+  if (await onPotionText(text, ctx)) return true;
+  return onMarketText(text, ctx);
+}
 async function hQuest() {
   const c = await client(); const q = await c.dailyQuestProgress().catch(() => ({}));
   const dq = q?.dailyQuest || {}; const cfg = q?.dailyQuestConfig || {};
@@ -935,6 +1163,7 @@ async function hVersion() {
     botPid() ? 'fish' : null,
     gatherPid() ? 'gather' : null,
     combatPid() ? 'combat' : null,
+    potionPid() ? 'potions' : null,
   ].filter(Boolean);
   const changedAt = next.lastChangedAt ? new Date(next.lastChangedAt).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '-';
   const compat = versionVerificationSummary(next, current.sha);
@@ -965,6 +1194,7 @@ async function hDiag() {
     `fish ${procAgeMin(PIDFILE) != null ? `🟢 ${fmtAgeMin(procAgeMin(PIDFILE))}` : '🔴 off'}`,
     `gather ${procAgeMin(GPIDFILE) != null ? `🟢 ${fmtAgeMin(procAgeMin(GPIDFILE))}` : '🔴 off'}`,
     `combat ${procAgeMin(CPIDFILE) != null ? `🟢 ${fmtAgeMin(procAgeMin(CPIDFILE))}` : '🔴 off'}`,
+    `potions ${procAgeMin(PPIDFILE) != null ? `🟢 ${fmtAgeMin(procAgeMin(PPIDFILE))}` : '🔴 off'}`,
   ].join(' | ');
   const lines = [
     '🩺 <b>Diag</b>',
@@ -988,7 +1218,7 @@ async function hDiag() {
 async function hStartFish() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (gatherPid() || combatPid() || pidOf(OPIDFILE)) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
+  if (gatherPid() || combatPid() || pidOf(OPIDFILE) || potionPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   if (botPid()) return '🎣 Fishing bot is already running.';
   replaceMainDesired('fish', {});
   const shard = await resolveShard();
@@ -998,7 +1228,7 @@ async function hStartFish() {
 async function hStartGather(args) {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (botPid() || combatPid() || pidOf(OPIDFILE)) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
+  if (botPid() || combatPid() || pidOf(OPIDFILE) || potionPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   const kind = (args[0] === 'rock' || args[0] === 'stone' || args[0] === 'coal' || args[0] === 'mine') ? 'rock' : 'tree';
   const lbl = kind === 'rock' ? '⛏ mining stone/coal/metal' : '🪓 woodcutting';
   const running = gatherPid(); const cur = readJson(GPIDFILE);
@@ -1013,7 +1243,7 @@ async function hStartGather(args) {
 async function hAuto() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (botPid() || gatherPid() || combatPid()) return '⚠️ Another bot is already running — use /stop before starting the orchestrator.';
+  if (botPid() || gatherPid() || combatPid() || potionPid()) return '⚠️ Another bot is already running — use /stop before starting the orchestrator.';
   if (pidOf(OPIDFILE)) return '🧠 Orchestrator is already running.';
   replaceMainDesired('auto', {});
   const pid = spawnBot('orchestrator.js', [], OPIDFILE);
@@ -1022,7 +1252,7 @@ async function hAuto() {
 async function hStartCombat() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (botPid() || gatherPid() || pidOf(OPIDFILE)) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
+  if (botPid() || gatherPid() || pidOf(OPIDFILE) || potionPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   if (combatPid()) return '⚔️ Combat bot is already running.';
   replaceMainDesired('combat', {});
   const shard = await resolveShard();
@@ -1036,11 +1266,13 @@ function hStop() {
     const pid = stopPidfile(pf);
     if (pid) msg.push(`🛑 ${name} STOP (pid ${pid})`);
   }
+  const potion = cancelPotionJob();
+  if (potion) msg.push(`🛑 Potion worker STOP (pid ${potion})`);
   return msg.length ? msg.join('\n') : '🔴 All bots are already OFF.';
 }
 function hHelp() {
   return `🤖 <b>Kintara Bot — Commands</b>\n` +
-    `/status — bot status & inventory\n/skills — skill levels, XP, avg level\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
+    `/status — bot status & inventory\n/skills — skill levels, XP, avg level\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/potions — buy potions from the alchemist\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
     `/fishing — fishing + cooking\n/gather — woodcutting 🪓\n/mine — mining stone/coal/metal ⛏\n/combat — hunt Wilderness zombies ⚔️\n/auto — automatic orchestrator (smart activity switching) 🧠\n/stop — stop all bots\n/help — command list\n\n` +
     `<i>1 account = 1 activity (safer against anti-cheat). Combat uses bank-first + auto-survival.</i>`;
 }
@@ -1069,7 +1301,7 @@ async function hServers() {
 
 const commands = {
   start: () => hHelp(), help: () => hHelp(),
-  status: hStatus, skills: hSkills, balance: hBalance, market: hMarket, version: hVersion,
+  status: hStatus, skills: hSkills, balance: hBalance, market: hMarket, potions: hPotions, version: hVersion,
   quest: hQuest, diag: hDiag, fishing: hStartFish, fish: hStartFish, stop: hStop,
   server: hServers, servers: hServers,
   spinner: hSpinner, spin: hSpinner,
@@ -1090,6 +1322,7 @@ const MENU = [
   { command: 'diag', description: '🩺 Auth, queue, tutorial' },
   { command: 'server', description: '🌐 Live server queues' },
   { command: 'market', description: '🛒 Marketplace prices' },
+  { command: 'potions', description: '🧪 Buy alchemist potions' },
   { command: 'version', description: '🧩 Game version watch' },
   { command: 'skills', description: '📈 Skill levels & XP' },
   { command: 'balance', description: '💰 Gold/$KINS/resource' },
@@ -1107,7 +1340,7 @@ async function syncMenu() {
   } catch (e) { console.error('syncMenu err', e.message); }
 }
 
-(async () => {
+async function main() {
   fs.mkdirSync(path.join(OUT, 'control'), { recursive: true });
   fs.writeFileSync(TGPIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() }));
   process.on('exit', () => { try { fs.unlinkSync(TGPIDFILE); } catch {} });
@@ -1128,12 +1361,15 @@ async function syncMenu() {
     if (state.sha && state.verifiedSha !== state.sha) runAutoVersionReview(state.sha);
   }
   await ensureDesiredServices();
+  if (potionPid() || readJson(POTION_JOBFILE)) {
+    monitorPotionJob().catch((error) => console.error('potion monitor recovery err', error.message));
+  }
   await tg.send('🤖 <b>Kintara Bot online!</b> Type /help to see the command list.').catch(() => {});
   console.log('[telegram-bot] polling...');
   let nextVersionPollAt = Date.now() + VERSION_POLL_MS;
   let nextKeepaliveAt = Date.now() + KEEPALIVE_POLL_MS;
   for (;;) {
-    try { await tg.pollCommands(commands, { onCallback: onMarketCallback, onText: onMarketText }); } catch (e) { console.error('poll err', e.message); }
+    try { await tg.pollCommands(commands, { onCallback: onTelegramCallback, onText: onTelegramText }); } catch (e) { console.error('poll err', e.message); }
     if (Date.now() >= nextVersionPollAt) {
       await maybeNotifyVersionChange();
       nextVersionPollAt = Date.now() + VERSION_POLL_MS;
@@ -1144,4 +1380,10 @@ async function syncMenu() {
     }
     await sleep(150);
   }
-})().catch((e) => { console.error('FATAL', e.message); process.exit(1); });
+}
+
+if (require.main === module) {
+  main().catch((e) => { console.error('FATAL', e.message); process.exit(1); });
+}
+
+module.exports = { main, potionSelectionButtons };
