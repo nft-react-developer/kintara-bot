@@ -176,7 +176,7 @@ async function gatherLoop(p) {
     await sleep(2000);
     // wait 8s so nodes from res_evt can accumulate
     saveState({ phase: 'learning', queueAhead: null, region: p.region });
-    log('belajar node 8s...'); await sleep(8000);
+    log('discovering resource nodes for 8s...'); await sleep(8000);
     await gatherLoop(p);
     try { p.close(); } catch {}
     await sleep(3000);

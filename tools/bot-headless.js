@@ -196,7 +196,7 @@ async function sellExcess(itemType, reserve) {
     const unitPrice = itemType === 'cooked_fish_meat' ? Math.max(2, fishPrice * 2) : fishPrice;
     const price = Math.max(1, Math.round(unitPrice * qty));
     const r = await cli.marketplaceSell({ itemType, slotKind: 'inv', slotIndex: idx, quantity: qty, currency: 'gold', priceGold: price });
-    if (r?.ok !== false) { stats.sold = (stats.sold || 0) + qty; log(`💰 jual ${qty} ${itemType} @${price}g total (~${unitPrice}g/unit, total terjual ${stats.sold})`); }
+    if (r?.ok !== false) { stats.sold = (stats.sold || 0) + qty; log(`💰 sold ${qty} ${itemType} @${price}g total (~${unitPrice}g/unit, total sold ${stats.sold})`); }
   } catch (e) { logThrottle('sell', 'sell err: ' + (e.message || '').slice(0, 50)); }
 }
 
@@ -207,7 +207,7 @@ async function fishLoop(p) {
     await catchOne(p);
     saveState({ region: p.region });
     await sleep(5500);
-    if (++sinceManage >= 12) { // tiap ~12 catch, kelola inventory
+    if (++sinceManage >= 12) { // manage inventory after roughly every 12 catches
       sinceManage = 0;
       try {
         const me = await cli.me(); const bp = me?.backpack || {};

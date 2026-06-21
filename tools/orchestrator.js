@@ -182,7 +182,7 @@ async function decide() {
   for (;;) {
     try {
       const d = await decide();
-      log(`evaluasi: goal=${d.goal} (${d.why}) | ${JSON.stringify(d.snapshot)}`);
+      log(`evaluation: goal=${d.goal} (${d.why}) | ${JSON.stringify(d.snapshot)}`);
       const elapsed = Date.now() - currentSince;
       let switched = false;
       let holdReason = null;
