@@ -5,7 +5,7 @@
 // (north portal) -> hunt nearest zombie (walk adjacent -> wm_ev hit until dead).
 // Combat XP is granted by the server (skill_xp push); daily zombie quest progresses via wm_ev by=me.
 //
-// SURVIVAL KETAT:
+// STRICT SURVIVAL:
 //  - BANK-FIRST is mandatory (zero carried-loss risk if death happens).
 //  - Monitor HP (wild_mb_ack/pvit/snap). HP<=POTION_HP -> consumePotion health.
 //    HP<=SHIELD_HP -> + potion_shield. HP<=RETREAT_HP / no potions left -> RETREAT
@@ -133,7 +133,7 @@ const bankCount = (bp, type) => {
   return slot ? Number(slot.n) || 0 : 0;
 };
 
-// Health potion = HoT +20/tick x5 = +100 total, DIDORONG CLIENT (consume-potion cuma
+// Health potion = HoT +20/tick x5 = +100 total, CLIENT-DRIVEN (consume-potion only
 // reduces potion count; real healing is client-side + save-hp). Headless applies and persists it.
 const HEALTH_POTION_TOTAL = 100;
 
@@ -257,7 +257,7 @@ async function enterWild(p) {
   stats.phase = 'wild';
   stats.queueAhead = null;
   log(`✅ entered wild region=${p.region} tile=${JSON.stringify(p.wildTile())}`);
-  // baseline combat XP (playerStats.skillXp.combat — bukan me())
+  // baseline combat XP (playerStats.skillXp.combat — not me())
   try {
     const st = await cli.playerStats(p.myId);
     if (st?.skillXp) stats.skillXp = { ...stats.skillXp, ...st.skillXp };

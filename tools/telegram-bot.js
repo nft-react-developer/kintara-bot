@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ============ TELEGRAM CONTROL BOT — kontrol + status headless bot ============
+// ============ TELEGRAM CONTROL BOT — headless bot control + status ============
 // Kintara control bot via Telegram: status, skills, balance, quests, start/stop fishing.
 // Uses lib/telegram (long-poll). Token+chatId come from .env (auto-captures chat id
 // when the first message is sent to the bot).
@@ -62,7 +62,7 @@ async function shardGateOk(c, id) {
     const r = await c.get(`/api/auth/gate-check?shard=${Number(id) | 0}`);
     return r && r.gate === 'ok';
   } catch (e) {
-    // 403 = gate nolak (membership/level/kins). Selain itu (network) -> unknown.
+    // 403 = gate rejected (membership/level/KINS). Anything else (network) -> unknown.
     if (e && e.status === 403) return false;
     return null; // unknown -> do not exclude immediately; let fallback decide
   }
@@ -74,13 +74,13 @@ async function pickBestShard(force = false) {
     const r = await c.servers();
     const list = (r.servers || []).filter((x) => x && x.id != null);
     if (!list.length) return null;
-    // override manual: lewati floor + gate-check (mis. udah premium / lvl 20)
+    // manual override: skip the floor and gate check (for example, premium or level 20)
     const bypass = process.env.KINTARA_ALLOW_LOW_SERVERS === '1';
-    // FLOOR: buang s1..s(MIN_SHARD-1) kecuali bypass.
+    // FLOOR: discard s1..s(MIN_SHARD-1) unless bypassed.
     const eligible = bypass ? list : list.filter((x) => Number(x.id) >= MIN_SHARD);
     const base = eligible.length ? eligible : list;
-    // prefer non-full dulu, lalu queue terkecil. Server full+queue=0 = anomaly,
-    // taruh setelah non-full tapi sebelum full+queue>0.
+    // Prefer non-full servers first, then the shortest queue. A full server with queue=0 is an anomaly;
+    // place it after non-full servers but before full servers with queue>0.
     const ranked = [...base].sort((a, b) => {
       const aFull = !!a.full, bFull = !!b.full;
       if (aFull !== bFull) return aFull ? 1 : -1;
@@ -262,8 +262,8 @@ function syncDesiredFromLive() {
       Object.assign(state, normalized);
     }
   }
-  // Kalau state masih kosong dan tidak ada proses jalan, biarkan idle (user start manual).
-  // Tapi kalau ada proses orphan yang jalan tanpa desired state, adopt mereka.
+  // If state is still empty and no process is running, remain idle (the user starts it manually).
+  // If orphaned processes are running without a desired state, adopt them.
   if (!dirty && Object.keys(state).length === 0) {
     const live = liveMainService();
     if (live) {

@@ -2,7 +2,7 @@
 // ============ GATHER BOT — autopilot wood/stone/coal/metal (Path A, headless) ============
 // Connect world -> learn nodes from res_evt -> walk adjacent -> harvestNode
 // (harv->proof->harv_hit until felled) -> save-backpack loot -> repeat. Level
-// woodcutting/mining. Supervisor reconnect, tahan 502.
+// woodcutting/mining. The supervisor reconnects and tolerates 502 responses.
 //
 // Usage: node tools/gather-bot.js [kind=tree|rock] [shard=s2]
 const fs = require('fs');

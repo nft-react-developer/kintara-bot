@@ -74,7 +74,7 @@ function spawnDetached(script, args, pidfile, extra = {}) {
   return child.pid;
 }
 
-const EVAL_MS = 600000;          // evaluasi tiap 10 menit (switch hemat)
+const EVAL_MS = 600000;          // evaluate every 10 minutes (avoid excessive switching)
 const MIN_RUN_MS = 1500000;      // minimum 25 minutes per activity before switching is allowed (avoid queue ping-pong)
 
 let cli, lastAuth = 0, current = null, currentSince = 0, myPid = null;
@@ -140,11 +140,11 @@ async function decide() {
   const st = await c.playerStats(myPid).catch(() => ({})); const xp = st.skillXp || {};
   let q = {}; try { q = await c.dailyQuestProgress(); } catch {}
   const quests = q?.dailyQuestConfig?.quests || [];
-  // sinyal goal
+  // goal signals
   const needFishQuest = quests.some((x) => x.kind === 'fish' && (q.dailyQuest?.prog?.[x.id] || 0) < x.target);
   const woodLow = (bp.wood || 0) < 100, stoneLow = (bp.stone || 0) < 100;
-  const gatherSkillLow = (xp.woodcutting || 0) < 5000 || (xp.mining || 0) < 5000; // level skill gather masih kecil
-  // keputusan
+  const gatherSkillLow = (xp.woodcutting || 0) < 5000 || (xp.mining || 0) < 5000; // gathering skill level is still low
+  // decision
   let goal, why;
   if (needFishQuest) { goal = 'fish'; why = 'unfinished daily fishing quest'; }
   else if (gatherSkillLow && (woodLow || stoneLow)) { goal = 'gather'; why = 'woodcutting/mining progression and materials are still low'; }
