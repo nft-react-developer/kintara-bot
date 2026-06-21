@@ -78,3 +78,20 @@ test('same-region snapshots do not rewind an active walk but transitions still s
   assert.equal(presence.pos.x, 0);
   assert.equal(presence.pos.z, 3);
 });
+
+test('stale snapshots cannot rewind an explicit region handoff', () => {
+  const presence = new Presence('s4', { synchronizeSelf: true });
+  presence.myId = 42;
+  presence.seedSelfState({ region: 'world', x: -18.5, y: 0.25, z: -27.5 });
+  presence.setRegion('alchemist_shop', 0, 3, 0.41);
+
+  presence._onSnap({ region: 'world', players: [{ id: 42, pr: 'world', x: -18.5, y: 0.25, z: -27.5 }] });
+  assert.equal(presence.region, 'alchemist_shop');
+  assert.equal(presence.pos.x, 0);
+  assert.equal(presence.pos.z, 3);
+
+  presence._onSnap({ region: 'alchemist_shop', players: [{ id: 42, pr: 'alchemist_shop', x: 0, y: 0.41, z: 3 }] });
+  assert.equal(presence.region, 'alchemist_shop');
+  assert.equal(presence.pos.x, 0);
+  assert.equal(presence.pos.z, 3);
+});

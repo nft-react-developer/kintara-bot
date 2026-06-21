@@ -781,9 +781,11 @@ async function monitorPotionJob() {
     const purchased = Number(result.purchased || 0);
     const label = POTION_LABELS[result.potionType || job.potionType] || result.potionType || job.potionType;
     const reason = result.reason ? `\nReason: <code>${escapeHtml(result.reason)}</code>` : '';
-    const heading = result.ok && result.complete !== false && purchased >= requested ? '✅ <b>Potion purchase complete</b>'
-      : purchased > 0 ? '⚠️ <b>Partial potion purchase</b>'
-        : '❌ <b>Potion purchase failed</b>';
+    const returnFailed = /return failed:/i.test(String(result.reason || ''));
+    const heading = result.ok && purchased >= requested && !returnFailed ? '✅ <b>Potion purchase complete</b>'
+      : result.ok && purchased >= requested && returnFailed ? '⚠️ <b>Purchase complete; return failed</b>'
+        : purchased > 0 ? '⚠️ <b>Partial potion purchase</b>'
+          : '❌ <b>Potion purchase failed</b>';
 
     const resumeDesired = normalizeDesiredState(job.resumeDesired || {});
     const hadPreviousActivity = Object.keys(resumeDesired).length > 0;
