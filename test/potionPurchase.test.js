@@ -17,22 +17,28 @@ class FakePresence {
     this.pos = { x, y: region === 'alchemist_shop' ? 0.41 : 0.25, z, ry: 0 };
     this.selfStateVersion = 1;
     this.moves = [];
+    this.transitions = [];
   }
 
   async walkTo(x, z) {
     this.moves.push({ region: this.region, x, z });
     this.pos.x = x;
     this.pos.z = z;
-    if (this.region === 'world' && x === SHOP.worldEntrance.x && z === SHOP.worldEntrance.z) {
-      this.region = 'alchemist_shop';
-      this.pos = { x: SHOP.shopSpawn.x, y: 0.41, z: SHOP.shopSpawn.z, ry: 0 };
-      this.selfStateVersion++;
-    } else if (this.region === 'alchemist_shop' && x === SHOP.shopExit.x && z === SHOP.shopExit.z) {
-      this.region = 'world';
-      this.pos = { x: SHOP.worldEntrance.x, y: 0.25, z: SHOP.worldEntrance.z, ry: 0 };
-      this.selfStateVersion++;
-    }
     return 'arrived';
+  }
+
+  waitForRegionConfirmation(region) {
+    return new Promise((resolve) => { this.confirmTransition = { region, resolve }; });
+  }
+
+  setRegion(region, x, z, y) {
+    assert.equal(this.confirmTransition?.region, region);
+    this.region = region;
+    this.pos = { x, y, z, ry: 0 };
+    this.selfStateVersion++;
+    this.transitions.push({ region, x, z });
+    this.confirmTransition.resolve(region);
+    this.confirmTransition = null;
   }
 
   async waitForRegion(region) {
@@ -84,6 +90,10 @@ test('navigation enters from world and exits through the confirmed coordinates',
     { region: 'world', x: -18.5, z: -27.5 },
     { region: 'alchemist_shop', x: 1, z: -2 },
     { region: 'alchemist_shop', x: 0, z: 4 },
+  ]);
+  assert.deepEqual(presence.transitions, [
+    { region: 'alchemist_shop', x: 0, z: 3 },
+    { region: 'world', x: -18.5, z: -27.5 },
   ]);
   assert.equal(presence.region, 'world');
 });
