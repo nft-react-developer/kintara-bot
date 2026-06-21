@@ -78,7 +78,7 @@ async function connectWithRetry() {
   for (let attempt = 1; ; attempt++) {
     try {
       const p = new Presence(SHARD);
-      if (cli) p.setCookie(cli.cookie);
+      if (cli) p.setCookie(cli.cookie, cli.player);
       p.on('log', (m) => log('[ws] ' + m));
       p.on('queue', (d) => {
         if (d.ahead % 5 === 0) log('queue ahead=' + d.ahead);
@@ -147,12 +147,23 @@ async function gatherLoop(p) {
     });
     const node = nodes[0]; harvested.add(node.key);
     const [col, row] = node.key.split(',').map(Number);
-    await p.walkTo(col - 30.5 - 1, row - 30.5, { maxSec: 20 });
+    log(`target selected: kind=${node.kind} key=${node.key} known=${pool.length} remaining=${nodes.length}`);
+    saveState({ phase: 'moving', queueAhead: null, region: p.region });
+    const walkResult = await p.walkTo(col - 30.5 - 1, row - 30.5, { maxSec: 20 });
+    log(`movement ${walkResult}: kind=${node.kind} key=${node.key} position=${p.pos.x.toFixed(1)},${p.pos.z.toFixed(1)}`);
     await sleep(1000);
-    if (!p.ready) break;
+    if (!p.ready) { log(`presence closed before harvest: kind=${node.kind} key=${node.key}`); break; }
+    saveState({ phase: 'harvesting', queueAhead: null, region: p.region });
+    log(`harvest started: kind=${node.kind} key=${node.key}`);
     const res = await p.harvestNode(node.kind, node.key, node.hasCoal, node.hasMetal, { maxHits: 10, hitGap: 1700 });
     stats.harvests++;
-    if (res.felled) { stats.felled++; await persistLoot(res.loot, 1); logT('fell', `🪓 felled ${node.kind} @${node.key} -> ${res.loot} (wood=${stats.wood} stone=${stats.stone} coal=${stats.coal} metal=${stats.metal}, felled ${stats.felled})`, 15000); }
+    if (res.felled) {
+      stats.felled++;
+      await persistLoot(res.loot, 1);
+      log(`🪓 felled ${node.kind} @${node.key} -> ${res.loot} (wood=${stats.wood} stone=${stats.stone} coal=${stats.coal} metal=${stats.metal}, felled=${stats.felled}, hits=${res.hits})`);
+    } else {
+      log(`⚠️ harvest incomplete: kind=${node.kind} key=${node.key} progress=${res.h}/${res.hm} hits=${res.hits} loot=${res.loot || 'none'}`);
+    }
     saveState({ phase: 'gather', queueAhead: null, region: p.region });
     await sleep(1500);
     if (harvested.size > 200) harvested.clear(); // reset so nodes can be re-harvested after respawn
@@ -177,6 +188,7 @@ async function gatherLoop(p) {
     // wait 8s so nodes from res_evt can accumulate
     saveState({ phase: 'learning', queueAhead: null, region: p.region });
     log('discovering resource nodes for 8s...'); await sleep(8000);
+    log(`resource discovery complete: trees=${p.knownNodes('tree').length} rocks=${p.knownNodes('rock').length} player=${p.myId ?? 'unknown'}`);
     await gatherLoop(p);
     try { p.close(); } catch {}
     await sleep(3000);
