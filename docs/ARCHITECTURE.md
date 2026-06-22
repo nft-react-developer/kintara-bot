@@ -15,6 +15,7 @@ Telegram operator
       +--> tools/orchestrator.js      # chooses one activity
       +--> tools/daily-quest.js       # claims completed quests
       +--> tools/potion-bot.js        # one-shot alchemist purchase worker
+      +--> tools/merchant-bot.js      # one-shot headless gold merchant worker
 
 Activity process
       |
@@ -44,12 +45,17 @@ The Telegram bot is the control plane. It starts activity scripts as detached ch
 
 | Process | Entry point | Notes |
 |---|---|---|
-| Control bot | `tools/telegram-bot.js` | Long-polls Telegram and handles `/fish`, `/gather`, `/mine`, `/auto`, `/stop`, `/status`, `/skills`, `/balance`, `/quest`, `/claim`, `/spinner`. |
+| Control bot | `tools/telegram-bot.js` | Long-polls Telegram, supervises the merchant watcher, and handles the Telegram command surface. |
 | Fishing bot | `tools/bot-headless.js` | Connects to Kintara presence, walks to pond, fishes, cooks, optionally sells excess fish. |
 | Gathering bot | `tools/gather-bot.js` | Learns resource nodes from WebSocket events, walks to nodes, harvests, persists loot. |
 | Orchestrator | `tools/orchestrator.js` | Claims completed daily quests, then chooses fishing or gathering based on daily quests, inventory, and skill levels. |
 | Daily quest bot | `tools/daily-quest.js` | Polls daily quest progress and claims completed quests. |
 | Potion worker | `tools/potion-bot.js` | Synchronizes the live position, walks to the alchemist, buys potions, returns to Mainland, and exits. |
+| Merchant worker | `tools/merchant-bot.js` | Synchronizes the live position, returns to Mainland, walks to the Traveling Merchant, trades complete material bundles for gold, and exits. |
+
+## Traveling Merchant watcher
+
+The Telegram controller polls merchant campaign and inventory state every five seconds. Its enabled state lives in `recon/control/merchant-watcher.json` and defaults to active. When trading is possible, it snapshots the desired activity, stops every inventory-mutating worker, launches the merchant worker, then restores the saved activity after completion. `/merchant` exposes live state and inline activate/pause/refresh controls. Meaningful decisions and attempts are appended to `recon/merchant.log`; unchanged successful polls are not logged.
 
 ## Data flow
 

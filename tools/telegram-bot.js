@@ -29,6 +29,23 @@ const {
   formatListingUnitPrice,
   MARKET_CATEGORIES,
 } = require('../lib/marketplaceView');
+const {
+  MERCHANT_TRADE_COST,
+  merchantResourceSnapshot,
+  fetchMerchantTradeCost,
+  merchantTradeEnabled,
+  maxMerchantTrades,
+  merchantWatcherButtons,
+  formatMerchantStatus,
+} = require('../lib/merchantCommand');
+const {
+  readMerchantWatcherState,
+  writeMerchantWatcherState,
+  createMerchantLogger,
+  applyMerchantWatcherAction,
+  runMerchantWatcherTick,
+  createNonOverlappingPoller,
+} = require('../lib/merchantRuntime');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'recon');
@@ -37,19 +54,28 @@ const GPIDFILE = path.join(OUT, 'control', 'gatherbot.pid');
 const OPIDFILE = path.join(OUT, 'control', 'orch.pid');
 const CPIDFILE = path.join(OUT, 'control', 'combatbot.pid');
 const PPIDFILE = path.join(OUT, 'control', 'potionbot.pid');
+const MPIDFILE = path.join(OUT, 'control', 'merchantbot.pid');
 const TGPIDFILE = path.join(OUT, 'control', 'telegram.pid');
 const POTION_JOBFILE = path.join(OUT, 'control', 'potion-job.json');
 const POTION_RESULTFILE = path.join(OUT, 'control', 'potion-result.json');
+const MERCHANT_WATCHER_STATEFILE = path.join(OUT, 'control', 'merchant-watcher.json');
+const MERCHANT_JOBFILE = path.join(OUT, 'control', 'merchant-job.json');
+const MERCHANT_RESULTFILE = path.join(OUT, 'control', 'merchant-result.json');
+const MERCHANT_JOB_STATEFILE = path.join(OUT, 'control', 'merchant-job-state.json');
+const MERCHANT_LOGFILE = path.join(OUT, 'merchant.log');
 const VERSION_STATEFILE = path.join(OUT, 'game-version-state.json');
 const AUTOREVIVE_STATEFILE = path.join(OUT, 'control', 'autorevive.json');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const VERSION_POLL_MS = 10 * 60 * 1000;
 const KEEPALIVE_POLL_MS = 20 * 1000;
+const MERCHANT_POLL_MS = 5 * 1000;
+const MERCHANT_COST_CACHE_MS = 10 * 60 * 1000;
 const AUTO_VERSION_REVIEW = (process.env.KINTARA_AUTO_VERSION_REVIEW || 'true').toLowerCase() !== 'false';
 const VERSION_REVIEW_TIMEOUT_MS = parseInt(process.env.KINTARA_VERSION_REVIEW_TIMEOUT_MS || '45000', 10);
 
 let cli = null, lastAuth = 0, myPid = null;
 let activeVersionReviewSha = null;
+const merchantLog = createMerchantLogger(MERCHANT_LOGFILE);
 async function client() {
   if (!cli) { const { client: c, player } = await KintaraClient.create(); cli = c; myPid = player?.id || myPid; lastAuth = Date.now(); }
   return cli;
@@ -144,6 +170,7 @@ function botPid() { return pidOf(PIDFILE); }
 function gatherPid() { return pidOf(GPIDFILE); }
 function combatPid() { return pidOf(CPIDFILE); }
 function potionPid() { return pidOf(PPIDFILE); }
+function merchantPid() { return pidOf(MPIDFILE); }
 function stopPidfile(pf) {
   const pid = pidOf(pf);
   if (!pid) return null;
@@ -176,6 +203,7 @@ function activityLabel(name, gatherKind = null) {
   if (name === 'combat') return '⚔️ Combat';
   if (name === 'auto') return '🧠 Auto';
   if (name === 'potion') return '🧪 Potion purchase';
+  if (name === 'merchant') return '🧓 Traveling Merchant';
   return 'Idle';
 }
 function procAgeMin(f) {
@@ -317,7 +345,9 @@ function stopMainService(name) {
   if (name === 'fish') return stopPidfile(PIDFILE);
   return null;
 }
-async function ensureDesiredServices() {
+async function ensureDesiredServices({ allowMerchantRestore = false, requireMerchantJob = false } = {}) {
+  if (!allowMerchantRestore && (merchantPid() || merchantMonitorRunning)) return;
+  if (requireMerchantJob && !readJson(MERCHANT_JOBFILE)) return;
   const state = normalizeDesiredState(readAutoreviveState());
   saveAutoreviveState(state);
   const desiredMain = state.auto ? 'auto' : state.combat ? 'combat' : state.gather ? 'gather' : state.fish ? 'fish' : null;
@@ -328,6 +358,7 @@ async function ensureDesiredServices() {
   for (const [name, meta] of Object.entries(state)) {
     const spec = await desiredServiceSpec(name, meta);
     if (!spec) continue;
+    if (requireMerchantJob && !readJson(MERCHANT_JOBFILE)) return;
     if (name === 'gather' && pidOf(spec.pidfile)) {
       const liveMeta = readJson(spec.pidfile) || {};
       if ((liveMeta.kind || 'tree') !== (meta.kind || 'tree')) {
@@ -492,12 +523,19 @@ async function maybeNotifyVersionChange() {
       clearDesired('fish', 'gather', 'auto', 'combat');
       const stopped = stopAllMainBots();
       const stoppedPotion = cancelPotionJob();
+      const stoppedMerchant = stopPidfile(MPIDFILE);
+      if (stoppedMerchant || merchantWatcherState().enabled !== false) {
+        saveMerchantWatcherState({ enabled: false, pausePending: false });
+        try { fs.unlinkSync(MERCHANT_JOBFILE); } catch {}
+        merchantLog('watcher_paused', { source: 'game_update', sha: current.sha });
+      }
       const stoppedNames = [
         stopped.auto ? 'auto' : null,
         stopped.fish ? 'fish' : null,
         stopped.gather ? 'gather' : null,
         stopped.combat ? 'combat' : null,
         stoppedPotion ? 'potions' : null,
+        stoppedMerchant ? 'merchant' : null,
       ].filter(Boolean);
       const stopLine = stoppedNames.length
         ? `\n🛑 Automation auto-paused: ${stoppedNames.join(', ')}`
@@ -510,13 +548,13 @@ async function maybeNotifyVersionChange() {
 
 // ---------- handlers ----------
 async function hStatus() {
-  const fr = botPid(), gr = gatherPid(), cb = combatPid(), pp = potionPid(), or = pidOf(OPIDFILE);
+  const fr = botPid(), gr = gatherPid(), cb = combatPid(), pp = potionPid(), mp = merchantPid(), or = pidOf(OPIDFILE);
   const gatherMeta = readJson(GPIDFILE) || {};
   const gatherState = readJson(path.join(OUT, 'gather-state.json'));
   const gatherKind = gatherMeta?.kind || gatherState?.kind || 'all';
   const gLbl = gatherKind === 'rock' ? '⛏ Mining' : gatherKind === 'tree' ? '🪓 Wood' : '🪓⛏ Gather';
   const orch = readJson(path.join(OUT, 'orchestrator-state.json'));
-  const active = pp ? 'potion' : cb ? 'combat' : gr ? 'gather' : fr ? 'fish' : or ? (orch?.current || 'auto') : 'idle';
+  const active = mp ? 'merchant' : pp ? 'potion' : cb ? 'combat' : gr ? 'gather' : fr ? 'fish' : or ? (orch?.current || 'auto') : 'idle';
   const activeLabel = activityLabel(active, gatherKind);
   const activeAge = active === 'fish'
     ? fmtAgeMin(procAgeMin(PIDFILE))
@@ -526,11 +564,13 @@ async function hStatus() {
         ? fmtAgeMin(procAgeMin(CPIDFILE))
         : active === 'potion'
           ? fmtAgeMin(procAgeMin(PPIDFILE))
+          : active === 'merchant'
+            ? fmtAgeMin(procAgeMin(MPIDFILE))
         : null;
   const lines = [
     '🤖 <b>Kintara Bot Status</b>',
     `🎯 <b>Active:</b> ${activeLabel}${activeAge ? ` • ${activeAge}` : ''}`,
-    `🧠 Auto ${or ? '🟢 ON' : '🔴 OFF'} | 🎣 Fish ${fr ? '🟢' : '🔴'} | ${gLbl} ${gr ? '🟢' : '🔴'} | ⚔️ Combat ${cb ? '🟢' : '🔴'} | 🧪 Potions ${pp ? '🟢' : '🔴'}`,
+    `🧠 Auto ${or ? '🟢 ON' : '🔴 OFF'} | 🎣 Fish ${fr ? '🟢' : '🔴'} | ${gLbl} ${gr ? '🟢' : '🔴'} | ⚔️ Combat ${cb ? '🟢' : '🔴'} | 🧪 Potions ${pp ? '🟢' : '🔴'} | 🧓 Merchant ${mp ? '🟢' : '🔴'}`,
   ];
   if (or && orch) {
     lines.push('');
@@ -687,6 +727,237 @@ const POTION_SESSION_TTL_MS = 10 * 60 * 1000;
 let potionSession = null;
 let potionMonitorRunning = false;
 
+let merchantMonitorRunning = false;
+let merchantCampaignSignature = null;
+let merchantCostCache = null;
+let merchantCostCachedAt = 0;
+let merchantLastPollError = null;
+let merchantLastPollErrorAt = 0;
+
+function merchantWatcherState() {
+  return readMerchantWatcherState(MERCHANT_WATCHER_STATEFILE);
+}
+
+function saveMerchantWatcherState(update) {
+  const current = merchantWatcherState();
+  return writeMerchantWatcherState(MERCHANT_WATCHER_STATEFILE, { ...current, ...update });
+}
+
+async function currentMerchantCost(force = false) {
+  if (!force && merchantCostCache && Date.now() - merchantCostCachedAt < MERCHANT_COST_CACHE_MS) {
+    return merchantCostCache;
+  }
+  const c = await client();
+  merchantCostCache = await fetchMerchantTradeCost(c.apiBase);
+  merchantCostCachedAt = Date.now();
+  return merchantCostCache;
+}
+
+async function fetchMerchantSnapshot({ forceCost = false, forWatcher = false } = {}) {
+  const c = await client();
+  let knownCampaign = null;
+  if (forWatcher) {
+    knownCampaign = await c.merchantCampaign();
+    if (!merchantTradeEnabled(knownCampaign) || Number(knownCampaign.goldStock) <= 0) {
+      return { campaign: knownCampaign, resources: null, cost: merchantCostCache || MERCHANT_TRADE_COST, maxTrades: 0 };
+    }
+  }
+  const [campaign, me, cost] = await Promise.all([
+    knownCampaign || c.merchantCampaign(),
+    c.me(),
+    currentMerchantCost(forceCost),
+  ]);
+  const resources = merchantResourceSnapshot(me?.backpack || {});
+  return { campaign, resources, cost, maxTrades: maxMerchantTrades(resources, campaign, cost) };
+}
+
+function merchantActiveJob() {
+  if (!merchantPid() && !merchantMonitorRunning) return null;
+  const job = readJson(MERCHANT_JOBFILE) || {};
+  const state = readJson(MERCHANT_JOB_STATEFILE) || {};
+  return {
+    ...job,
+    phase: state.phase || 'starting',
+    resumeLabel: activityLabel(job.resumeService || null, job.resumeDesired?.gather?.kind),
+  };
+}
+
+async function merchantStatusMessage({ forceCost = false } = {}) {
+  const state = merchantWatcherState();
+  const job = merchantActiveJob();
+  try {
+    const snapshot = await fetchMerchantSnapshot({ forceCost });
+    return {
+      text: formatMerchantStatus({ state, job, ...snapshot }),
+      buttons: merchantWatcherButtons(state),
+    };
+  } catch (error) {
+    merchantLog('manual_refresh_failed', { reason: String(error?.message || error).slice(0, 160) });
+    return {
+      text: formatMerchantStatus({ state, job, cost: merchantCostCache || MERCHANT_TRADE_COST, error: error?.message || error }),
+      buttons: merchantWatcherButtons(state),
+    };
+  }
+}
+
+async function hMerchant() {
+  const authErr = await ensureLoginOk();
+  if (authErr) return authErr;
+  const view = await merchantStatusMessage();
+  await tg.send(view.text, { buttons: view.buttons });
+  return null;
+}
+
+async function editMerchantStatus(ctx, opts = {}) {
+  const view = await merchantStatusMessage(opts);
+  return tg.editMessage(ctx.chatId, ctx.messageId, view.text, { buttons: view.buttons });
+}
+
+async function onMerchantCallback(data, ctx) {
+  if (!data.startsWith('mr:')) return false;
+  const action = data.slice(3);
+  const current = merchantWatcherState();
+  if (action === 'activate') {
+    saveMerchantWatcherState(applyMerchantWatcherAction(current, action));
+    merchantLog('watcher_activated', { source: 'telegram' });
+  } else if (action === 'pause') {
+    const active = !!merchantActiveJob();
+    saveMerchantWatcherState(applyMerchantWatcherAction(current, action, { jobActive: active }));
+    merchantLog(active ? 'watcher_pause_pending' : 'watcher_paused', { source: 'telegram' });
+  } else if (action === 'refresh') {
+    merchantLog('manual_refresh', { source: 'telegram' });
+  } else {
+    return true;
+  }
+  await editMerchantStatus(ctx, { forceCost: action === 'refresh' });
+  return true;
+}
+
+function desiredServiceName(state = {}) {
+  if (state.auto) return 'auto';
+  if (state.combat) return 'combat';
+  if (state.gather) return 'gather';
+  if (state.fish) return 'fish';
+  return null;
+}
+
+async function beginMerchantJob(snapshot) {
+  if (merchantPid() || merchantMonitorRunning) return false;
+  const potionJob = potionPid() ? readJson(POTION_JOBFILE) : null;
+  syncDesiredFromLive();
+  const resumeDesired = normalizeDesiredState(potionJob?.resumeDesired || readAutoreviveState());
+  const resumeService = desiredServiceName(resumeDesired);
+  const shard = await resolveShard();
+  const job = {
+    cost: snapshot.cost,
+    campaign: snapshot.campaign,
+    maxTrades: snapshot.maxTrades,
+    resumeDesired,
+    resumeService,
+    shard,
+    startedAt: Date.now(),
+  };
+  try { fs.unlinkSync(MERCHANT_RESULTFILE); } catch {}
+  fs.writeFileSync(MERCHANT_JOBFILE, JSON.stringify(job, null, 2));
+  saveAutoreviveState({});
+  const stopped = stopAllMainBots();
+  const stoppedPotion = cancelPotionJob();
+  let pid;
+  try {
+    merchantLog('job_starting', {
+      maxTrades: snapshot.maxTrades,
+      resources: snapshot.resources,
+      stopped: { ...stopped, potion: stoppedPotion },
+      resumeService,
+    });
+    await sleep(300);
+    pid = spawnBot('merchant-bot.js', [shard], MPIDFILE);
+    merchantLog('worker_spawned', { pid, shard });
+  } catch (error) {
+    saveAutoreviveState(resumeDesired);
+    await ensureDesiredServices({ allowMerchantRestore: true }).catch(() => {});
+    try { fs.unlinkSync(MERCHANT_JOBFILE); } catch {}
+    merchantLog('job_start_failed', { reason: String(error?.message || error), resumeService });
+    throw error;
+  }
+  await tg.send(
+    `🧓 <b>Merchant trade started</b>\nPossible trades: <b>${snapshot.maxTrades}</b>\n` +
+    `${resumeService ? `${activityLabel(resumeService, resumeDesired.gather?.kind)} was paused and will resume automatically.` : 'No activity was running.'}`
+  ).catch(() => {});
+  monitorMerchantJob().catch((error) => merchantLog('monitor_failed', { reason: error.message }));
+  return true;
+}
+
+async function monitorMerchantJob() {
+  if (merchantMonitorRunning) return;
+  merchantMonitorRunning = true;
+  try {
+    while (merchantPid()) await sleep(1000);
+    const job = readJson(MERCHANT_JOBFILE);
+    if (!job) return;
+    const result = readJson(MERCHANT_RESULTFILE) || { ok: false, traded: 0, reason: 'worker stopped without a result' };
+    const state = merchantWatcherState();
+    if (result.resetAtMs > Date.now()) {
+      saveMerchantWatcherState({ cooldownUntil: result.resetAtMs });
+      merchantLog('daily_cap_cooldown', { resetAtMs: result.resetAtMs });
+    } else if (!result.traded && result.reason && !/no_complete_bundle|merchant_not_trading/.test(result.reason)) {
+      const retryAt = Date.now() + 5 * 60 * 1000;
+      saveMerchantWatcherState({ cooldownUntil: retryAt });
+      merchantLog('worker_retry_backoff', { retryAt, reason: result.reason });
+    }
+    if (state.pausePending) saveMerchantWatcherState({ enabled: false, pausePending: false });
+    saveAutoreviveState(normalizeDesiredState(job.resumeDesired || {}));
+    let restoreText = job.resumeService ? `${activityLabel(job.resumeService, job.resumeDesired?.gather?.kind)} restored.` : 'No previous activity was running.';
+    try {
+      await ensureDesiredServices({ allowMerchantRestore: true, requireMerchantJob: true });
+      if (!readJson(MERCHANT_JOBFILE)) {
+        merchantLog('activity_restore_cancelled', { source: 'stop_or_update' });
+        return;
+      }
+      merchantLog('activity_restored', { service: job.resumeService || null });
+    } catch (error) {
+      restoreText = `Activity restore failed: ${String(error.message).slice(0, 100)}`;
+      merchantLog('activity_restore_failed', { service: job.resumeService || null, reason: error.message });
+    }
+    try { fs.unlinkSync(MERCHANT_JOBFILE); } catch {}
+    const heading = result.traded > 0 ? '✅ <b>Merchant trade complete</b>' : '⚠️ <b>Merchant trade finished</b>';
+    await tg.send(
+      `${heading}\nGold received: <b>${Number(result.traded) || 0}</b>` +
+      `${result.reason ? `\nReason: <code>${escapeHtml(result.reason)}</code>` : ''}\n\n${escapeHtml(restoreText)}`
+    ).catch(() => {});
+  } finally {
+    merchantMonitorRunning = false;
+  }
+}
+
+async function performMerchantWatcherPoll() {
+  try {
+    const state = merchantWatcherState();
+    const result = await runMerchantWatcherTick({
+      state,
+      jobActive: !!merchantPid() || merchantMonitorRunning,
+      previousSignature: merchantCampaignSignature,
+      fetchSnapshot: () => fetchMerchantSnapshot({ forWatcher: true }),
+      startJob: beginMerchantJob,
+      log: merchantLog,
+    });
+    merchantLastPollError = null;
+    merchantCampaignSignature = result.signature || merchantCampaignSignature;
+  } catch (error) {
+    const reason = String(error?.message || error).slice(0, 160);
+    if (reason !== merchantLastPollError || Date.now() - merchantLastPollErrorAt >= 5 * 60 * 1000) {
+      merchantLog('watcher_poll_failed', { reason });
+      merchantLastPollError = reason;
+      merchantLastPollErrorAt = Date.now();
+    }
+  }
+}
+
+const runMerchantPollWithoutOverlap = createNonOverlappingPoller(performMerchantWatcherPoll);
+function pollMerchantWatcher() {
+  return runMerchantPollWithoutOverlap();
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -733,6 +1004,7 @@ function potionSelectionButtons(session = potionSession) {
 }
 
 async function hPotions() {
+  if (merchantPid() || merchantMonitorRunning) return '🧓 A merchant trade is already running. Please wait for its result.';
   if (potionPid()) return '🧪 A potion purchase is already running. Please wait for its result.';
   mkReset();
   const c = await client();
@@ -773,6 +1045,10 @@ async function beginPotionJob(ctx) {
   }
   if (potionPid()) {
     await tg.editMessage(ctx.chatId, ctx.messageId, '🧪 A potion purchase is already running.');
+    return;
+  }
+  if (merchantPid() || merchantMonitorRunning) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, '🧓 A merchant trade is already running.');
     return;
   }
 
@@ -1183,6 +1459,7 @@ async function onMarketText(text) {
 
 async function onTelegramCallback(data, ctx) {
   if (data.startsWith('pt:')) return onPotionCallback(data, ctx);
+  if (data.startsWith('mr:')) return onMerchantCallback(data, ctx);
   return onMarketCallback(data, ctx);
 }
 
@@ -1293,7 +1570,7 @@ async function hDiag() {
 async function hStartFish() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (gatherPid() || combatPid() || pidOf(OPIDFILE) || potionPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
+  if (gatherPid() || combatPid() || pidOf(OPIDFILE) || potionPid() || merchantPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   if (botPid()) return '🎣 Fishing bot is already running.';
   replaceMainDesired('fish', {});
   const shard = await resolveShard();
@@ -1303,7 +1580,7 @@ async function hStartFish() {
 async function hStartGather(args) {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (botPid() || combatPid() || pidOf(OPIDFILE) || potionPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
+  if (botPid() || combatPid() || pidOf(OPIDFILE) || potionPid() || merchantPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   const kind = (args[0] === 'rock' || args[0] === 'stone' || args[0] === 'coal' || args[0] === 'mine') ? 'rock' : 'tree';
   const lbl = kind === 'rock' ? '⛏ mining stone/coal/metal' : '🪓 woodcutting';
   const running = gatherPid(); const cur = readJson(GPIDFILE);
@@ -1318,7 +1595,7 @@ async function hStartGather(args) {
 async function hAuto() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (botPid() || gatherPid() || combatPid() || potionPid()) return '⚠️ Another bot is already running — use /stop before starting the orchestrator.';
+  if (botPid() || gatherPid() || combatPid() || potionPid() || merchantPid()) return '⚠️ Another bot is already running — use /stop before starting the orchestrator.';
   if (pidOf(OPIDFILE)) return '🧠 Orchestrator is already running.';
   replaceMainDesired('auto', {});
   const pid = spawnBot('orchestrator.js', [], OPIDFILE);
@@ -1327,7 +1604,7 @@ async function hAuto() {
 async function hStartCombat() {
   const authErr = await ensureLoginOk();
   if (authErr) return authErr;
-  if (botPid() || gatherPid() || pidOf(OPIDFILE) || potionPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
+  if (botPid() || gatherPid() || pidOf(OPIDFILE) || potionPid() || merchantPid()) return '⚠️ Another bot is already running — use /stop first (1 account = 1 activity).';
   if (combatPid()) return '⚔️ Combat bot is already running.';
   replaceMainDesired('combat', {});
   const shard = await resolveShard();
@@ -1343,11 +1620,19 @@ function hStop() {
   }
   const potion = cancelPotionJob();
   if (potion) msg.push(`🛑 Potion worker STOP (pid ${potion})`);
+  const merchant = stopPidfile(MPIDFILE);
+  if (merchant) msg.push(`🛑 Merchant worker STOP (pid ${merchant})`);
+  if (merchant || merchantWatcherState().enabled !== false) {
+    saveMerchantWatcherState({ enabled: false, pausePending: false });
+    try { fs.unlinkSync(MERCHANT_JOBFILE); } catch {}
+    merchantLog('watcher_paused', { source: 'stop_command' });
+    msg.push('🛑 Merchant watcher PAUSED');
+  }
   return msg.length ? msg.join('\n') : '🔴 All bots are already OFF.';
 }
 function hHelp() {
   return `🤖 <b>Kintara Bot — Commands</b>\n` +
-    `/status — bot status & inventory\n/skills — skill levels, XP, avg level\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/potions — buy potions from the alchemist\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
+    `/status — bot status & inventory\n/skills — skill levels, XP, avg level\n/balance — gold/$KINS/resources\n/market — marketplace prices & actions\n/potions — buy potions from the alchemist\n/merchant — automatic Traveling Merchant watcher\n/version — current game version\n/quest — daily quests\n/spinner — 🎡 free spin wheel (12h)\n/diag — auth, queue, tutorial, process\n` +
     `/fishing — fishing + cooking\n/gather — woodcutting 🪓\n/mine — mining stone/coal/metal ⛏\n/combat — hunt Wilderness zombies ⚔️\n/auto — automatic orchestrator (smart activity switching) 🧠\n/stop — stop all bots\n/help — command list\n\n` +
     `<i>1 account = 1 activity (safer against anti-cheat). Combat uses bank-first + auto-survival.</i>`;
 }
@@ -1376,7 +1661,7 @@ async function hServers() {
 
 const commands = {
   start: () => hHelp(), help: () => hHelp(),
-  status: hStatus, skills: hSkills, balance: hBalance, market: hMarket, potions: hPotions, version: hVersion,
+  status: hStatus, skills: hSkills, balance: hBalance, market: hMarket, potions: hPotions, merchant: hMerchant, version: hVersion,
   quest: hQuest, diag: hDiag, fishing: hStartFish, fish: hStartFish, stop: hStop,
   server: hServers, servers: hServers,
   spinner: hSpinner, spin: hSpinner,
@@ -1398,6 +1683,7 @@ const MENU = [
   { command: 'server', description: '🌐 Live server queues' },
   { command: 'market', description: '🛒 Marketplace prices' },
   { command: 'potions', description: '🧪 Buy alchemist potions' },
+  { command: 'merchant', description: '🧓 Gold merchant watcher' },
   { command: 'version', description: '🧩 Game version watch' },
   { command: 'skills', description: '📈 Skill levels & XP' },
   { command: 'balance', description: '💰 Gold/$KINS/resource' },
@@ -1417,8 +1703,14 @@ async function syncMenu() {
 
 async function main() {
   fs.mkdirSync(path.join(OUT, 'control'), { recursive: true });
+  const initialMerchantState = merchantWatcherState();
+  if (!fs.existsSync(MERCHANT_WATCHER_STATEFILE)) writeMerchantWatcherState(MERCHANT_WATCHER_STATEFILE, initialMerchantState);
+  merchantLog('watcher_started', { enabled: initialMerchantState.enabled !== false, intervalMs: MERCHANT_POLL_MS });
   fs.writeFileSync(TGPIDFILE, JSON.stringify({ pid: process.pid, started: Date.now() }));
-  process.on('exit', () => { try { fs.unlinkSync(TGPIDFILE); } catch {} });
+  process.on('exit', () => {
+    try { merchantLog('watcher_stopped'); } catch {}
+    try { fs.unlinkSync(TGPIDFILE); } catch {}
+  });
   process.on('SIGINT', () => { console.log('[telegram-bot] SIGINT received, exiting'); process.exit(0); });
   process.on('SIGTERM', () => { console.log('[telegram-bot] SIGTERM received, exiting'); process.exit(0); });
   process.on('SIGHUP', () => { console.log('[telegram-bot] SIGHUP received, exiting'); process.exit(0); });
@@ -1435,7 +1727,9 @@ async function main() {
     const state = readVersionState();
     if (state.sha && state.verifiedSha !== state.sha) runAutoVersionReview(state.sha);
   }
-  await ensureDesiredServices();
+  const recoveringMerchant = merchantPid() || readJson(MERCHANT_JOBFILE);
+  if (recoveringMerchant) monitorMerchantJob().catch((error) => merchantLog('monitor_recovery_failed', { reason: error.message }));
+  else await ensureDesiredServices();
   if (potionPid() || readJson(POTION_JOBFILE)) {
     monitorPotionJob().catch((error) => console.error('potion monitor recovery err', error.message));
   }
@@ -1443,6 +1737,7 @@ async function main() {
   console.log('[telegram-bot] polling...');
   let nextVersionPollAt = Date.now() + VERSION_POLL_MS;
   let nextKeepaliveAt = Date.now() + KEEPALIVE_POLL_MS;
+  let nextMerchantPollAt = Date.now();
   for (;;) {
     try { await tg.pollCommands(commands, { onCallback: onTelegramCallback, onText: onTelegramText }); } catch (e) { console.error('poll err', e.message); }
     if (Date.now() >= nextVersionPollAt) {
@@ -1453,6 +1748,10 @@ async function main() {
       try { await ensureDesiredServices(); } catch (e) { console.error('keepalive err', e.message); }
       nextKeepaliveAt = Date.now() + KEEPALIVE_POLL_MS;
     }
+    if (Date.now() >= nextMerchantPollAt) {
+      await pollMerchantWatcher();
+      nextMerchantPollAt = Date.now() + MERCHANT_POLL_MS;
+    }
     await sleep(150);
   }
 }
@@ -1461,4 +1760,4 @@ if (require.main === module) {
   main().catch((e) => { console.error('FATAL', e.message); process.exit(1); });
 }
 
-module.exports = { main, potionSelectionButtons };
+module.exports = { main, potionSelectionButtons, onMerchantCallback, merchantStatusMessage, pollMerchantWatcher };

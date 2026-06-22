@@ -73,6 +73,7 @@ After install, open your Telegram bot and type `/start`:
 | `/balance` | 💰 Gold / $KINS / resources |
 | `/market` | 🛒 Live market prices + interactive buy/sell flow |
 | `/potions` | 🧪 Walk to the alchemist and buy health, shield, strength, or poison potions |
+| `/merchant` | 🧓 View, pause, activate, or refresh the automatic gold merchant watcher |
 | `/spinner` | 🎡 Claim the free daily spin (12h cooldown) |
 | `/quest` | 📋 Daily quests |
 | `/version` | 🧩 Current game/client version detected by bot |
@@ -86,6 +87,7 @@ After install, open your Telegram bot and type `/start`:
 
 - **Interactive `/market`**: shows live prices, uses the official Marketplace categories, requests server-ranked cheapest buy listings, and supports Telegram selling of inventory-slot items in **gold** or **$KINS**.
 - **Interactive `/potions`**: checks the current game client for live potion availability, shows current resources and recipe costs, pauses the current activity, buys as many as resources allow, then resumes the previous activity.
+- **Automatic `/merchant` watcher**: checks the Traveling Merchant every five seconds, pauses active automation when a complete gold bundle is affordable, walks there headlessly, trades the maximum available amount, then restores the previous activity. Runtime decisions are recorded in `recon/merchant.log`.
 - **Daily `/spinner`**: claims the free spin wheel reward and reports cooldown / paid-spin ticker info.
 - **Smart `/auto`**: orchestrator chooses the best activity automatically instead of locking you into one loop.
 - **Realtime `/status`**: shows current bot state, inventory snapshot, balance, and spinner readiness.
@@ -128,7 +130,7 @@ npm run combat   # Wilderness hunting
 npm run auto     # orchestrator
 ```
 
-`/market`, `/spinner`, `/version`, `/diag`, and the richer inline flows are exposed through the Telegram controller (`npm start` or `node tools/telegram-bot.js`).
+`/market`, `/potions`, `/merchant`, `/spinner`, `/version`, `/diag`, and the richer inline flows are exposed through the Telegram controller (`npm start` or `node tools/telegram-bot.js`).
 
 ## 🩺 Troubleshooting
 
