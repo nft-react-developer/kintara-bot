@@ -41,9 +41,16 @@ test('potion command reports every known resource counter', () => {
     cooked_fish_meat: 8,
     raw_chicken: 2,
     cooked_chicken: 1,
+    potion_health: 11,
+    potion_shield: 6,
+    potion_strength: 4,
+    potion_poison: 2,
   });
   const summary = formatPotionResources(resources);
-  for (const expected of ['1,234', 'Stone', 'Coal', 'Metal', 'Gold', 'Fish', 'Cooked fish', 'Raw chicken', 'Cooked chicken']) {
+  for (const expected of [
+    'Current potions', 'Health: <b>11', 'Shield: <b>6', 'Strength: <b>4', 'Poison: <b>2',
+    '1,234', 'Stone', 'Coal', 'Metal', 'Gold', 'Fish', 'Cooked fish', 'Raw chicken', 'Cooked chicken',
+  ]) {
     assert.match(summary, new RegExp(expected));
   }
 });
