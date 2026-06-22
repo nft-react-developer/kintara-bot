@@ -15,7 +15,16 @@ const { levelFromTotalXp, formatSkillBandProgressShort, averageLevelFloor, preci
 const { isWalletBannedError } = require('../lib/walletAuth');
 const { Presence } = require('../lib/presenceWs');
 const { getErrors } = require('../lib/errorbus');
-const { POTION_TYPES, POTION_LABELS, normalizePotionType, parsePotionQuantity } = require('../lib/potionCommand');
+const {
+  POTION_TYPES,
+  POTION_LABELS,
+  normalizePotionType,
+  parsePotionQuantity,
+  potionResourceSnapshot,
+  fetchPotionCatalog,
+  formatPotionResources,
+  formatPotionRecipes,
+} = require('../lib/potionCommand');
 const {
   MARKET_CATEGORIES,
   availableMarketCategories,
@@ -698,18 +707,28 @@ function potionSessionActive() {
 
 function potionSummary(session = potionSession) {
   const label = POTION_LABELS[session?.potionType] || session?.potionType || '?';
-  return `🧪 <b>Potion Purchase</b>\nType: <b>${label}</b>\nQuantity: <b>${session?.quantity || '?'}</b>`;
+  const inventory = session?.resources ? `\n\n${formatPotionResources(session.resources)}` : '';
+  return `🧪 <b>Potion Purchase</b>\nType: <b>${label}</b>\nQuantity: <b>${session?.quantity || '?'}</b>` +
+    `${inventory}\n\n${formatPotionRecipes(session?.catalog)}`;
 }
 
-function potionSelectionButtons() {
+function potionSelectionButtons(session = potionSession) {
+  const typeButton = (emoji, label, key) => {
+    const type = POTION_TYPES[key];
+    const unavailable = session?.catalog?.[type]?.available === false;
+    return {
+      text: unavailable ? `🚫 ${label}` : `${emoji} ${label}`,
+      data: unavailable ? `pt:unavailable:${key}` : `pt:type:${key}`,
+    };
+  };
   return [
     [
-      { text: '❤️ Health', data: 'pt:type:health' },
-      { text: '🛡 Shield', data: 'pt:type:shield' },
+      typeButton('❤️', 'Health', 'health'),
+      typeButton('🛡', 'Shield', 'shield'),
     ],
     [
-      { text: '💪 Strength', data: 'pt:type:strength' },
-      { text: '☠️ Poison', data: 'pt:type:poison' },
+      typeButton('💪', 'Strength', 'strength'),
+      typeButton('☠️', 'Poison', 'poison'),
     ],
     [10, 25, 50, 100].map((quantity) => ({ text: String(quantity), data: `pt:qty:${quantity}` })),
     [{ text: '✏️ Custom quantity', data: 'pt:custom' }],
@@ -720,7 +739,23 @@ function potionSelectionButtons() {
 async function hPotions() {
   if (potionPid()) return '🧪 A potion purchase is already running. Please wait for its result.';
   mkReset();
-  potionSession = { potionType: POTION_TYPES.health, quantity: 50, step: 'select', updatedAt: Date.now() };
+  const c = await client();
+  let me;
+  let catalog;
+  try {
+    [me, catalog] = await Promise.all([c.me(), fetchPotionCatalog(c.apiBase)]);
+  } catch (error) {
+    console.error('[telegram-bot] potion availability check failed', error.message);
+    return '⚠️ Could not verify current potion availability. Run /potions again in a moment.';
+  }
+  potionSession = {
+    potionType: POTION_TYPES.health,
+    quantity: 50,
+    resources: potionResourceSnapshot(me?.backpack),
+    catalog,
+    step: 'select',
+    updatedAt: Date.now(),
+  };
   await tg.send(`${potionSummary()}\n\nChoose a potion type and quantity. Health x50 is selected by default.`, {
     buttons: potionSelectionButtons(),
   });
@@ -832,9 +867,17 @@ async function onPotionCallback(data, ctx) {
     await tg.editMessage(ctx.chatId, ctx.messageId, '⚠️ Potion session expired. Run /potions again.');
     return true;
   }
+  if (action.startsWith('unavailable:')) {
+    const type = normalizePotionType(action.slice(12));
+    const label = POTION_LABELS[type] || 'That potion';
+    await tg.editMessage(ctx.chatId, ctx.messageId,
+      `${potionSummary()}\n\n⚠️ ${label} is currently unavailable. Choose another potion.`,
+      { buttons: potionSelectionButtons() });
+    return true;
+  }
   if (action.startsWith('type:')) {
     const potionType = normalizePotionType(action.slice(5));
-    if (potionType) potionSession.potionType = potionType;
+    if (potionType && potionSession.catalog?.[potionType]?.available !== false) potionSession.potionType = potionType;
     await showPotionSelection(ctx);
     return true;
   }

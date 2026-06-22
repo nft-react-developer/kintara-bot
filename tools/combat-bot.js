@@ -21,6 +21,7 @@ const { KintaraClient } = require('../lib/kintaraClient');
 const { isWalletBannedError } = require('../lib/walletAuth');
 const bank = require('../lib/bank');
 const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
+const { POTION_RECIPES: POTION_COSTS } = require('../lib/potionCommand');
 
 const SHARD = process.argv[2] || config.shard || 's4';
 const OUT = path.join(__dirname, '..', 'recon');
@@ -54,10 +55,6 @@ const RETREAT_HP = 22;  // bail to safe camp + Mainland
 const MIN_GOLD = Math.max(0, Number(config.combatMinGold) || 20);
 const TARGET_HEALTH_POTIONS = Math.max(0, Number(config.combatMinHealthPotions) || 6);
 const TARGET_SHIELD_POTIONS = Math.max(0, Number(config.combatMinShieldPotions) || 2);
-const POTION_COSTS = {
-  potion_health: { wood: 6, stone: 0, coal: 0 },
-  potion_shield: { wood: 0, stone: 5, coal: 0 },
-};
 
 const stats = {
   kills: 0, hits: 0, combatStart: null, combatNow: null, combatGain: 0,
