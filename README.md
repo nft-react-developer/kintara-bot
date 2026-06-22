@@ -84,7 +84,7 @@ After install, open your Telegram bot and type `/start`:
 
 ## ✨ Included Features
 
-- **Interactive `/market`**: shows live prices, filters buy listings by category, ranks each currency by cheapest unit price, and supports Telegram selling of inventory-slot items in **gold** or **$KINS**.
+- **Interactive `/market`**: shows live prices, uses the official Marketplace categories, requests server-ranked cheapest buy listings, and supports Telegram selling of inventory-slot items in **gold** or **$KINS**.
 - **Interactive `/potions`**: checks the current game client for live potion availability, shows current resources and recipe costs, pauses the current activity, buys as many as resources allow, then resumes the previous activity.
 - **Daily `/spinner`**: claims the free spin wheel reward and reports cooldown / paid-spin ticker info.
 - **Smart `/auto`**: orchestrator chooses the best activity automatically instead of locking you into one loop.

@@ -26,12 +26,8 @@ const {
   formatPotionRecipes,
 } = require('../lib/potionCommand');
 const {
+  formatListingUnitPrice,
   MARKET_CATEGORIES,
-  availableMarketCategories,
-  filterListingsByCategory,
-  listingCurrency,
-  listingUnitPrice,
-  sortListingsCheapest,
 } = require('../lib/marketplaceView');
 
 const ROOT = path.join(__dirname, '..');
@@ -939,7 +935,13 @@ const MARKET_ITEMS = [
   ['metal', '🔩 metal'],
   ['gold', '🪙 gold'],
 ];
-const ITEM_LABEL = Object.fromEntries(MARKET_ITEMS.map(([k, v]) => [k, v]));
+const ITEM_LABEL = {
+  ...Object.fromEntries(MARKET_ITEMS.map(([k, v]) => [k, v])),
+  potion_health: '🧪 health potion',
+  potion_shield: '🧪 shield potion',
+  potion_strength: '🧪 strength potion',
+  potion_poison: '🧪 poison potion',
+};
 const MARKET_CATEGORY_LABEL = Object.fromEntries(MARKET_CATEGORIES.map(({ id, label }) => [id, label]));
 
 let mkSession = null;
@@ -986,12 +988,6 @@ async function hMarket() {
 function formatListingPrice(x) {
   if (x.currency === 'token' || x.currency === 'kins') return `$${x.priceUsd ?? '?'} total ($KINS)`;
   return `${x.priceGold ?? '?'}g total`;
-}
-
-function formatListingUnitPrice(x) {
-  const unitPrice = listingUnitPrice(x);
-  if (!Number.isFinite(unitPrice)) return '?/unit';
-  return listingCurrency(x) === 'token' ? `$${fmtMarketNum(unitPrice, 6)}/unit` : `${fmtMarketNum(unitPrice)}g/unit`;
 }
 
 async function mkShowInventory(ctx) {
@@ -1087,42 +1083,33 @@ async function mkSubmitListing(text) {
   }
 }
 async function mkShowBuy(ctx) {
-  const c = await client();
-  let arr = [];
-  try { const Lst = await c.marketplaceListings({ limit: 50 }); arr = Lst.listings || Lst.items || Lst.data || []; } catch (e) {
-    await tg.editMessage(ctx.chatId, ctx.messageId, `⚠️ Failed to load listings: ${e.message.slice(0, 50)}`, { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }]] });
-    return;
-  }
-  if (!arr.length) { await tg.editMessage(ctx.chatId, ctx.messageId, '🛒 There are no active listings yet.', { buttons: [[{ text: '⬅️ Back', data: 'mk:back' }]] }); return; }
-  mkSession = { mode: 'buy', step: 'pick-category', listings: arr };
-  const categoryButtons = availableMarketCategories(arr).map(({ id, label }) => ({ text: label, data: `mk:cat:${id}` }));
+  mkSession = { mode: 'buy', step: 'pick-category' };
+  const categoryButtons = MARKET_CATEGORIES.map(({ id, label }) => ({ text: label, data: `mk:cat:${id}` }));
   const grid = [];
   for (let i = 0; i < categoryButtons.length; i += 2) grid.push(categoryButtons.slice(i, i + 2));
   grid.push([{ text: '⬅️ Back', data: 'mk:back' }]);
-  await tg.editMessage(ctx.chatId, ctx.messageId, '🛒 <b>BUY</b> — choose a category:\n\n<i>Listings are ordered by the cheapest unit price. Gold and $KINS are ranked separately.</i>', { buttons: grid });
+  await tg.editMessage(ctx.chatId, ctx.messageId, '🛒 <b>BUY</b> — choose a category:\n\n<i>Listings are ordered by the cheapest unit price returned by the Marketplace.</i>', { buttons: grid });
 }
 
 async function mkShowBuyCategory(category, ctx) {
   if (!MARKET_CATEGORY_LABEL[category]) return mkShowBuy(ctx);
-  let arr = mkSession?.mode === 'buy' && Array.isArray(mkSession.listings) ? mkSession.listings : [];
-  if (!arr.length) {
-    const c = await client();
-    try {
-      const Lst = await c.marketplaceListings({ limit: 50 });
-      arr = Lst.listings || Lst.items || Lst.data || [];
-    } catch (e) {
-      await tg.editMessage(ctx.chatId, ctx.messageId, `⚠️ Failed to load listings: ${e.message.slice(0, 50)}`, { buttons: [[{ text: '⬅️ Categories', data: 'mk:buy' }]] });
-      return;
-    }
+  const c = await client();
+  let response;
+  try {
+    response = await c.marketplaceListings({ sort: 'cheap', currency: 'all', category, limit: 20, offset: 0 });
+  } catch (e) {
+    await tg.editMessage(ctx.chatId, ctx.messageId, `⚠️ Failed to load listings: ${e.message.slice(0, 50)}`, { buttons: [[{ text: '⬅️ Categories', data: 'mk:buy' }]] });
+    return;
   }
-  const filtered = sortListingsCheapest(filterListingsByCategory(arr, category));
-  if (!filtered.length) {
+  const listings = response.listings || response.items || response.data || [];
+  if (!listings.length) {
     await tg.editMessage(ctx.chatId, ctx.messageId, `🛒 There are no active listings in ${MARKET_CATEGORY_LABEL[category]}.`, { buttons: [[{ text: '⬅️ Categories', data: 'mk:buy' }]] });
     return;
   }
-  mkSession = { mode: 'buy', step: 'listings', category, listings: arr };
-  const lines = [`🛒 <b>BUY — ${MARKET_CATEGORY_LABEL[category]}</b>`, '<i>Cheapest price per unit first (Gold, then $KINS).</i>', ''];
-  for (const x of filtered.slice(0, 12)) {
+  mkSession = { mode: 'buy', step: 'listings', category };
+  const total = Number.isFinite(Number(response.total)) ? Number(response.total) : listings.length;
+  const lines = [`🛒 <b>BUY — ${MARKET_CATEGORY_LABEL[category]}</b>`, `<i>Cheapest price per unit first • showing ${Math.min(20, listings.length)} of ${total}</i>`, ''];
+  for (const x of listings.slice(0, 20)) {
     const it = x.itemType || x.item; const lbl = ITEM_LABEL[it] || it;
     lines.push(`${lbl} x${x.quantity} — <b>${formatListingUnitPrice(x)}</b> • ${formatListingPrice(x)} • ${x.sellerName || '?'}`);
   }
