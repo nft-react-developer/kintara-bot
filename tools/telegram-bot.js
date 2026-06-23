@@ -240,9 +240,13 @@ function killDuplicateScriptProcesses(script) {
     }
   } catch {}
 }
-function spawnBot(script, args, pidfile) {
+function spawnBot(script, args, pidfile, opts = {}) {
   killDuplicateScriptProcesses(script);
-  const child = cp.spawn('node', [scriptPath(script), ...args], { detached: true, stdio: 'ignore', cwd: ROOT });
+  const spawnOptions = { detached: true, stdio: 'ignore', cwd: ROOT };
+  if (opts.env && typeof opts.env === 'object') {
+    spawnOptions.env = { ...process.env, ...opts.env };
+  }
+  const child = cp.spawn('node', [scriptPath(script), ...args], spawnOptions);
   child.unref(); fs.writeFileSync(pidfile, JSON.stringify({ pid: child.pid, started: Date.now() }));
   return child.pid;
 }
@@ -872,8 +876,10 @@ async function beginMerchantJob(snapshot) {
       resumeService,
     });
     await sleep(300);
-    pid = spawnBot('merchant-bot.js', [shard], MPIDFILE);
-    merchantLog('worker_spawned', { pid, shard });
+    const merchantClient = await client();
+    const merchantEnv = merchantClient.cookie ? { KINTARA_SESSION_COOKIE: merchantClient.cookie } : {};
+    pid = spawnBot('merchant-bot.js', [shard], MPIDFILE, { env: merchantEnv });
+    merchantLog('worker_spawned', { pid, shard, inheritedSession: !!merchantEnv.KINTARA_SESSION_COOKIE });
   } catch (error) {
     saveAutoreviveState(resumeDesired);
     await ensureDesiredServices({ allowMerchantRestore: true }).catch(() => {});
