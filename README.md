@@ -75,7 +75,7 @@ After install, open your Telegram bot and type `/start`:
 | `/potions` | 🧪 Walk to the alchemist and buy health, shield, strength, or poison potions |
 | `/merchant` | 🧓 View, pause, activate, or refresh the automatic gold merchant watcher |
 | `/spinner` | 🎡 Claim the free daily spin (12h cooldown) |
-| `/quest` | 📋 Daily quests |
+| `/quest` | 📋 Claim ready daily quests, then show active quests |
 | `/version` | 🧩 Current game/client version detected by bot |
 | `/diag` | 🩺 Auth / queue / tutorial diagnostics |
 | `/server` | 🌐 Live server queues + auto-pick (lowest queue) |

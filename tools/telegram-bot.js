@@ -46,6 +46,7 @@ const {
   runMerchantWatcherTick,
   createNonOverlappingPoller,
 } = require('../lib/merchantRuntime');
+const { buildQuestCommandMessage } = require('../lib/questCommand');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'recon');
@@ -1468,31 +1469,8 @@ async function onTelegramText(text, ctx) {
   return onMarketText(text, ctx);
 }
 async function hQuest() {
-  const c = await client(); const q = await c.dailyQuestProgress().catch(() => ({}));
-  const dq = q?.dailyQuest || {}; const cfg = q?.dailyQuestConfig || {};
-  if (!(cfg.quests || []).length) return `📋 <b>Daily Quest</b> (${dq.day || '?'})\n(no quests available today)`;
-  const prog = { ...(dq.prog || {}) };
-  const claimed = { ...(dq.claimed || {}) };
-  const claimedNow = [];
-  for (const quest of (cfg.quests || [])) {
-    const pr = prog[quest.id] || 0;
-    if (pr >= quest.target && !claimed[quest.id]) {
-      try {
-        const r = await c.dailyQuestClaim(quest.id);
-        if (!r?.error) {
-          claimed[quest.id] = true;
-          claimedNow.push(quest.label);
-        }
-      } catch {}
-    }
-  }
-  const lines = (cfg.quests || []).map((quest) => {
-    const pr = prog[quest.id] || 0; const cl = claimed[quest.id];
-    return `${cl ? '✅' : pr >= quest.target ? '🎁' : '▫️'} ${quest.label} — ${pr}/${quest.target} (${quest.rewardXpSpreadTotal}XP)`;
-  });
-  const head = `📋 <b>Daily Quest</b> (${dq.day})`;
-  const auto = claimedNow.length ? `\n🎁 Auto-claimed: ${claimedNow.join(', ')}` : '';
-  return head + auto + '\n' + lines.join('\n');
+  const c = await client();
+  return buildQuestCommandMessage(c);
 }
 async function hVersion() {
   const authErr = await ensureLoginOk();
