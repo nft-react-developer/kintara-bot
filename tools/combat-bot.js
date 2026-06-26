@@ -12,7 +12,7 @@
 //    to safe camp + exit Mainland. Bot NEVER sends wmb contact reports -> mob
 //    cannot damage us; the real risk is PvP. Retreat remains a safety net.
 //
-// Usage: node tools/combat-bot.js [shard=s2]
+// Usage: node tools/combat-bot.js [shard=s6]
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
@@ -23,7 +23,7 @@ const bank = require('../lib/bank');
 const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
 const { POTION_RECIPES: POTION_COSTS } = require('../lib/potionCommand');
 
-const SHARD = process.argv[2] || config.shard || 's4';
+const SHARD = process.argv[2] || config.shard || 's6';
 const OUT = path.join(__dirname, '..', 'recon');
 const PIDFILE = path.join(OUT, 'control', 'combatbot.pid');
 const STATEFILE = path.join(OUT, 'combat-state.json');

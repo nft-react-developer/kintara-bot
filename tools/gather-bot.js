@@ -4,7 +4,7 @@
 // (harv->proof->harv_hit until felled) -> save-backpack loot -> repeat. Level
 // woodcutting/mining. The supervisor reconnects and tolerates 502 responses.
 //
-// Usage: node tools/gather-bot.js [kind=tree|rock] [shard=s2]
+// Usage: node tools/gather-bot.js [kind=tree|rock] [shard=s6]
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
@@ -15,7 +15,7 @@ const gs = require('../lib/gameState');
 const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
 
 const KIND = process.argv[2] || 'tree';
-const SHARD = process.argv[3] || config.shard || 's4';
+const SHARD = process.argv[3] || config.shard || 's6';
 const OUT = path.join(__dirname, '..', 'recon');
 const PIDFILE = path.join(OUT, 'control', 'gatherbot.pid');
 const log = (...a) => { const s = `[${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}`; console.log(s); fs.appendFileSync(path.join(OUT, 'gather.log'), s + '\n'); };

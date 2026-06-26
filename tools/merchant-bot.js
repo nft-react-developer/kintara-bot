@@ -16,7 +16,7 @@ const JOBFILE = path.join(CONTROL, 'merchant-job.json');
 const RESULTFILE = path.join(CONTROL, 'merchant-result.json');
 const STATEFILE = path.join(CONTROL, 'merchant-job-state.json');
 const LOGFILE = path.join(OUT, 'merchant.log');
-const shard = process.argv[2] || config.shard || 's4';
+const shard = process.argv[2] || config.shard || 's6';
 const log = createMerchantLogger(LOGFILE);
 
 function readJson(file) {

@@ -4,7 +4,7 @@
 // queue->presence). Loop: go to The Pond -> grant-fish-xp{} -> daily-quest fish.
 // Log status to recon/bot.log + recon/bot-state.json. Stop with kill / Ctrl-C.
 //
-// Usage: node tools/bot-headless.js [shard=s2]
+// Usage: node tools/bot-headless.js [shard=s6]
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
@@ -13,7 +13,7 @@ const { KintaraClient } = require('../lib/kintaraClient');
 const { login, isWalletBannedError } = require('../lib/walletAuth');
 const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
 
-const SHARD = process.argv[2] || config.shard || 's4';
+const SHARD = process.argv[2] || config.shard || 's6';
 const OUT = path.join(__dirname, '..', 'recon');
 const PIDFILE = path.join(OUT, 'control', 'fishbot.pid');
 const STATEFILE = path.join(OUT, 'bot-state.json');

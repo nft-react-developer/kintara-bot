@@ -18,6 +18,7 @@ const { config } = require('../config');
 const { KintaraClient } = require('../lib/kintaraClient');
 const { isWalletBannedError } = require('../lib/walletAuth');
 const { pickInventorySnapshot } = require('../lib/inventorySnapshot');
+const { createShardResolver } = require('../lib/shardSelection');
 const tg = require('../lib/telegram');
 
 const ROOT = path.join(__dirname, '..');
@@ -83,37 +84,7 @@ function saveState(data) {
   fs.writeFileSync(STATEFILE, JSON.stringify({ ...data, ts: Date.now() }, null, 2));
 }
 
-// Choose the lowest-queue shard this wallet CAN enter (gate=ok). Accounts that are not
-// level 20 and without membership are rejected from s1-s3. Hard floor: shard >= KINTARA_MIN_SHARD
-// (default 4). gate-check is the second layer so it follows server map changes.
-const ORCH_MIN_SHARD = Math.max(1, parseInt(process.env.KINTARA_MIN_SHARD || '4', 10) || 4);
-let _shardCache = { ts: 0, shard: null };
-async function pickShard() {
-  if (Date.now() - _shardCache.ts < 120000 && _shardCache.shard) return _shardCache.shard;
-  try {
-    const c = await client();
-    const r = await c.servers();
-    const bypass = process.env.KINTARA_ALLOW_LOW_SERVERS === '1';
-    const list = (r.servers || []).filter((x) => x && x.id != null);
-    const eligible = bypass ? list : list.filter((x) => Number(x.id) >= ORCH_MIN_SHARD);
-    const ranked = (eligible.length ? eligible : list)
-      .sort((a, b) => {
-        const aFull = !!a.full, bFull = !!b.full;
-        if (aFull !== bFull) return aFull ? 1 : -1;
-        return (Number(a.queueLength || 0) - Number(b.queueLength || 0));
-      });
-    if (!bypass) {
-      for (const sv of ranked) {
-        let ok = null;
-        try { const g = await c.get(`/api/auth/gate-check?shard=${Number(sv.id) | 0}`); ok = g && g.gate === 'ok'; }
-        catch (e) { ok = e && e.status === 403 ? false : null; }
-        if (ok === true) { _shardCache = { ts: Date.now(), shard: 's' + sv.id }; return _shardCache.shard; }
-      }
-      if (ranked[0]) { _shardCache = { ts: Date.now(), shard: 's' + ranked[0].id }; return _shardCache.shard; }
-    } else if (ranked[0]) { _shardCache = { ts: Date.now(), shard: 's' + ranked[0].id }; return _shardCache.shard; }
-  } catch {}
-  return config.shard || 's4';
-}
+const pickShard = createShardResolver({ getClient: client, cacheMs: 120000 });
 
 async function ensureOnly(activity) {
   // ensure only `activity` is running

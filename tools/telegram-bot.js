@@ -14,6 +14,7 @@ const { KintaraClient } = require('../lib/kintaraClient');
 const { levelFromTotalXp, formatSkillBandProgressShort, averageLevelFloor, preciseAverageLevel } = require('../lib/skillXp');
 const { isWalletBannedError } = require('../lib/walletAuth');
 const { Presence } = require('../lib/presenceWs');
+const { allowLowServers, configuredMinShard, createShardResolver } = require('../lib/shardSelection');
 const { getErrors } = require('../lib/errorbus');
 const {
   POTION_TYPES,
@@ -94,66 +95,9 @@ async function ensureLoginOk() {
 }
 function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
 
-// Choose the lowest-queue shard this wallet CAN enter (gate=ok).
-// Build 1ce1fc76 added entry-gate /api/auth/gate-check (membership/level/$KINS).
-// Accounts below level 20 and without membership are always rejected from s1-s3. Therefore set
-// Hard floor: only choose shards >= KINTARA_MIN_SHARD (default 4). Gate-check remains
-// as a second layer so it automatically follows server map changes.
-const MIN_SHARD = Math.max(1, parseInt(process.env.KINTARA_MIN_SHARD || '4', 10) || 4);
-let _bestShardCache = { ts: 0, shard: null };
-async function shardGateOk(c, id) {
-  try {
-    const r = await c.get(`/api/auth/gate-check?shard=${Number(id) | 0}`);
-    return r && r.gate === 'ok';
-  } catch (e) {
-    // 403 = gate rejected (membership/level/KINS). Anything else (network) -> unknown.
-    if (e && e.status === 403) return false;
-    return null; // unknown -> do not exclude immediately; let fallback decide
-  }
-}
-async function pickBestShard(force = false) {
-  if (!force && Date.now() - _bestShardCache.ts < 60000 && _bestShardCache.shard) return _bestShardCache.shard;
-  try {
-    const c = await client();
-    const r = await c.servers();
-    const list = (r.servers || []).filter((x) => x && x.id != null);
-    if (!list.length) return null;
-    // manual override: skip the floor and gate check (for example, premium or level 20)
-    const bypass = process.env.KINTARA_ALLOW_LOW_SERVERS === '1';
-    // FLOOR: discard s1..s(MIN_SHARD-1) unless bypassed.
-    const eligible = bypass ? list : list.filter((x) => Number(x.id) >= MIN_SHARD);
-    const base = eligible.length ? eligible : list;
-    // Prefer non-full servers first, then the shortest queue. A full server with queue=0 is an anomaly;
-    // place it after non-full servers but before full servers with queue>0.
-    const ranked = [...base].sort((a, b) => {
-      const aFull = !!a.full, bFull = !!b.full;
-      if (aFull !== bFull) return aFull ? 1 : -1;
-      return (Number(a.queueLength || 0) - Number(b.queueLength || 0));
-    });
-    if (bypass) {
-      const shard0 = 's' + ranked[0].id;
-      _bestShardCache = { ts: Date.now(), shard: shard0 };
-      return shard0;
-    }
-    // live gate-check probe; take the first shard (lowest queue) with gate=ok
-    for (const sv of ranked) {
-      const ok = await shardGateOk(c, sv.id);
-      if (ok === true) {
-        const shard = 's' + sv.id;
-        _bestShardCache = { ts: Date.now(), shard };
-        return shard;
-      }
-    }
-    // all gates rejected / unreachable -> fallback: lowest-queue shard >= floor
-    const best = ranked[0];
-    const shard = 's' + best.id;
-    _bestShardCache = { ts: Date.now(), shard };
-    return shard;
-  } catch { return null; }
-}
-async function resolveShard() {
-  const best = await pickBestShard();
-  return best || config.shard || 's4';
+const resolveBestShard = createShardResolver({ getClient: client, cacheMs: 60000 });
+async function resolveShard(force = false) {
+  return resolveBestShard({ force });
 }
 
 function pidOf(f) {
@@ -1535,7 +1479,7 @@ async function hDiag() {
   const lines = [
     '🩺 <b>Diag</b>',
     `👤 ${player.display_name || player.username || '?'} • id ${player.id || '?'}`,
-    `🧭 shard ${(await resolveShard().catch(() => null)) || config.shard || 's4'} • tutorial ${tutorialStep} • avg ${viewer?.avgLevel ?? '?'}`,
+    `🧭 shard ${(await resolveShard().catch(() => null)) || config.shard || 's6'} • tutorial ${tutorialStep} • avg ${viewer?.avgLevel ?? '?'}`,
     `🎒 inv ${(me?.backpack?.invSlots || []).filter(Boolean).length}/24 • gold ${me?.backpack?.gold || 0}`,
     '',
     '🤖 <b>Process</b>',
@@ -1631,15 +1575,16 @@ async function hServers() {
   if (!list.length) return '\u26a0\ufe0f No server data.';
   list.sort((a, b) => Number(a.queueLength || 0) - Number(b.queueLength || 0));
   const lines = ['\ud83c\udf10 <b>Servers \u2014 Live Queue</b>', ''];
-  const levelGated = process.env.KINTARA_ALLOW_LOW_SERVERS === '1' ? new Set() : new Set([1, 2, 3]);
+  const minShard = configuredMinShard();
+  const bypass = allowLowServers();
   for (const sv of list) {
-    const locked = levelGated.has(Number(sv.id));
+    const locked = !bypass && Number(sv.id) < minShard;
     const mark = locked ? '🔒' : (sv.full ? '\ud83d\udd34' : '\ud83d\udfe2');
-    const tag = locked ? ' (lvl 20+)' : (sv.full ? ' (full)' : '');
+    const tag = locked ? ' (restricted)' : (sv.full ? ' (full)' : '');
     lines.push(`${mark} s${sv.id} ${sv.name || ''} — queue <b>${sv.queueLength ?? '?'}</b>${tag}`);
   }
-  const best = await pickBestShard(true);
-  lines.push('', `✅ Auto-pick on start: <b>${best || '?'}</b> (lowest joinable queue)`, '<i>🔒 s1–s3 need level 20+ — auto-skipped.</i>');
+  const best = await resolveShard(true);
+  lines.push('', `✅ Auto-pick on start: <b>${best || '?'}</b> (lowest joinable queue)`, `<i>🔒 Shards below s${minShard} are skipped unless KINTARA_ALLOW_LOW_SERVERS=1.</i>`);
   return lines.join('\n');
 }
 

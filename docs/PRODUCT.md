@@ -69,8 +69,9 @@ The primary user is an operator who controls the bot through Telegram. The opera
 | `WALLET_PRIVATE_KEY` | Yes | Solana Base58 key used to sign Kintara login challenge. |
 | `TELEGRAM_BOT_TOKEN` | Yes | Telegram BotFather token. |
 | `TELEGRAM_CHAT_ID` | Recommended | Restricts command handling to one chat. |
-| `KINTARA_SHARD` | Optional | Preferred game shard/server used for queue and presence WebSockets. Defaults to `s2`. |
-| `KINTARA_SHARD_FALLBACKS` | Optional | Comma-separated fallback shards tried when queue/presence rejects the selected shard with HTTP 403. |
+| `KINTARA_SHARD` | Optional | Preferred game shard/server used for queue and presence WebSockets. Defaults to `s6`, the first public shard in the current server map. |
+| `KINTARA_SHARD_FALLBACKS` | Optional | Comma-separated fallback shards tried when queue/presence rejects the selected shard with HTTP 403. Defaults to public shards `s7`–`s15`. |
+| `KINTARA_MIN_SHARD` | Optional | Lowest shard considered by Telegram/orchestrator auto-pick. Defaults to `6` to avoid Club-only shards for non-members. |
 | `KINTARA_API_BASE` | Optional | Defaults to `https://kintara.gg`. |
 | `KINTARA_FANOUT_BASE` | Optional | Defaults to `https://ktra-server-b.onrender.com`. |
 

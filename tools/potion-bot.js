@@ -11,7 +11,7 @@ const { runPotionPurchase, spawnToPresenceState } = require('../lib/potionPurcha
 
 const potionType = normalizePotionType(process.argv[2]);
 const quantity = parsePotionQuantity(process.argv[3]);
-const shard = process.argv[4] || config.shard || 's4';
+const shard = process.argv[4] || config.shard || 's6';
 const OUT = path.join(__dirname, '..', 'recon');
 const CONTROL = path.join(OUT, 'control');
 const STATEFILE = path.join(OUT, 'potion-state.json');

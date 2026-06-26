@@ -110,8 +110,9 @@ For a NAS/container image with Node 20 and no Chrome:
 - Use `yarn start` to run the Telegram controller.
 - Use `yarn install --production=true --ignore-optional` to skip `playwright-core`.
 - Do not run `yarn dev`; there is no `dev` script.
-- Set `KINTARA_SHARD` to select the preferred game server, for example `s2` or `s3`.
+- Set `KINTARA_SHARD` to select the preferred game server, for example `s6` for the first public shard.
 - Set `KINTARA_SHARD_FALLBACKS` to allow automatic failover when the selected shard rejects queue/presence with HTTP 403.
+- Set `KINTARA_MIN_SHARD` if the public server floor changes; it defaults to `6` so auto-pick skips current Club-only shards.
 - Persist the repository and `recon/` directory on NAS storage if state/logs should survive restarts.
 - The app needs outbound network access to Kintara and Telegram.
 
